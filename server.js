@@ -27,6 +27,11 @@ app.post('/checkout', async (req, res) => {
       mode: 'payment',
       success_url: 'https://sualoja.com/sucesso',
       cancel_url: 'https://sualoja.com/cancelado',
+      ui_mode: 'hosted',
+      customizations: {
+        logo: 'https://cdn.shopify.com/s/files/1/0953/6041/8068/files/AVENELI_1_466f2404-11f9-4f16-901c-a5d59874425c.png?v=1751317409',
+        accent_color: '#F6F2E9',
+      },
     });
 
     res.json({ checkout_url: session.url });
