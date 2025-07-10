@@ -2,69 +2,37 @@ const express = require('express');
 const app = express();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const cors = require('cors');
-const fetch = require('node-fetch');
-
-app.use(cors());
-app.use(express.json());
-
-const klarnaSupportedCountries = ['DE', 'AT', 'FI', 'NL', 'SE', 'NO', 'DK', 'BE'];
-const idealSupportedCountries = ['NL'];
-const blockedCountries = ['BR', 'CN', 'JP', 'CA', 'AU'];
-
-async function getCountryByIP(ip)
-
-
-
-
-
-
-
-Fontes
-Você disse:
-const express = require('express');
-const app = express();
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const cors = require('cors');
 
 app.use(cors());
 app.use(express.json());
 
 app.post('/checkout', async (req, res) => {
-  const { items } = req.body;
+  const { amount, quantity, description, image } = req.body;
+
+  if (!amount || !quantity || !description) {
+    return res.status(400).json({ error: 'Dados incompletos' });
+  }
 
   try {
-    const line_items = items.map(item => ({
-      price_data: {
-        currency: 'eur',
-        product_data: {
-          name: item.name || 'Produto',
-          images: item.image ? [item.image] : [],
-        },
-        unit_amount: Math.round(item.price), // valor já deve vir em centavos
-      },
-      quantity: item.quantity || 1,
-    }));
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['ideal', 'klarna', 'card'],
-      line_items,
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            product_data: {
+              name: description,
+              ...(image && { images: [image] }),
+            },
+            unit_amount: Math.round(amount * 100), // em centavos
+          },
+          quantity: quantity,
+        },
+      ],
       mode: 'payment',
       success_url: 'https://aveneli.com/pages/success',
-      cancel_url: 'https://aveneli.com/pages/cart',
+      cancel_url: 'https://aveneli.com/pages/cancel',
     });
 
-    res.json({ checkout_url: session.url });
-  } catch (err) {
-    console.error('Erro ao criar checkout:', err);
-    res.status(500).json({ error: 'Erro ao criar sessão de checkout' });
-  }
-});
+    res.json({ checkout_url: session._
 
-app.get('/', (req, res) => {
-  res.send('API Stripe Klarna/IDeal funcionando!');
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(Servidor rodando na porta ${PORT});
-});
