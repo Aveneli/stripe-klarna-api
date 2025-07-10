@@ -11,30 +11,26 @@ const klarnaSupportedCountries = ['DE', 'AT', 'FI', 'NL', 'SE', 'NO', 'DK', 'BE'
 const idealSupportedCountries = ['NL'];
 const blockedCountries = ['BR', 'CN', 'JP', 'CA', 'AU'];
 
-async function getCountryByIP(ip) {
-  try {
-    const res = await fetch(`https://ipapi.co/${ip}/json/`);
-    const data = await res.json();
-    return data.country || null;
-  } catch (error) {
-    console.error('Erro ao buscar o país por IP:', error);
-    return null;
-  }
-}
+async function getCountryByIP(ip)
+
+
+
+
+
+
+
+Fontes
+Você disse:
+const express = require('express');
+const app = express();
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const cors = require('cors');
+
+app.use(cors());
+app.use(express.json());
 
 app.post('/checkout', async (req, res) => {
   const { items } = req.body;
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress;
-
-  const country = await getCountryByIP(clientIp);
-
-  if (!country || blockedCountries.includes(country)) {
-    return res.status(403).json({ error: 'País não suportado para esse método de pagamento.' });
-  }
-
-  const enabledPaymentMethods = ['card'];
-  if (klarnaSupportedCountries.includes(country)) enabledPaymentMethods.push('klarna');
-  if (idealSupportedCountries.includes(country)) enabledPaymentMethods.push('ideal');
 
   try {
     const line_items = items.map(item => ({
@@ -44,13 +40,13 @@ app.post('/checkout', async (req, res) => {
           name: item.name || 'Produto',
           images: item.image ? [item.image] : [],
         },
-        unit_amount: Math.round(item.price),
+        unit_amount: Math.round(item.price), // valor já deve vir em centavos
       },
       quantity: item.quantity || 1,
     }));
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: enabledPaymentMethods,
+      payment_method_types: ['ideal', 'klarna', 'card'],
       line_items,
       mode: 'payment',
       success_url: 'https://aveneli.com/pages/success',
@@ -65,10 +61,10 @@ app.post('/checkout', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.send('API Stripe Klarna/iDEAL funcionando com filtro de países.');
+  res.send('API Stripe Klarna/IDeal funcionando!');
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(Servidor rodando na porta ${PORT});
 });
