@@ -9,29 +9,23 @@ app.use(express.json());
 app.post('/checkout', async (req, res) => {
   const { items } = req.body;
 
-  if (!items || !Array.isArray(items)) {
-    return res.status(400).json({ error: 'Items inválidos' });
-  }
-
-  const line_items = items.map(item => ({
-    price_data: {
-      currency: 'eur',
-      product_data: {
-        name: item.name,
-        images: item.image ? [item.image] : [],
-      },
-      unit_amount: item.price,
-    },
-    quantity: item.quantity || 1
-  }));
-
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['ideal', 'klarna', 'card'],
-      line_items,
+      line_items: items.map(item => ({
+        price_data: {
+          currency: 'eur',
+          product_data: {
+            name: item.name,
+            images: [item.image],
+          },
+          unit_amount: item.price, // já está em centavos!
+        },
+        quantity: item.quantity,
+      })),
       mode: 'payment',
-      success_url: 'https://aveneli.com/pages/success',
-      cancel_url: 'https://aveneli.com/pages/cancel',
+      success_url: 'https://aveneli.com/pages/sucesso',
+      cancel_url: 'https://aveneli.com/pages/cancelado',
     });
 
     res.json({ checkout_url: session.url });
