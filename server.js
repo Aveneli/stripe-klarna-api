@@ -9,29 +9,29 @@ app.use(express.json());
 app.post('/checkout', async (req, res) => {
   const { items } = req.body;
 
-  try {
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Itens inválidos no corpo da requisição.' });
-    }
+  if (!items || !Array.isArray(items)) {
+    return res.status(400).json({ error: 'Items inválidos' });
+  }
 
-    const line_items = items.map(item => ({
-      price_data: {
-        currency: 'eur',
-        product_data: {
-          name: item.name || 'Produto',
-          images: item.image ? [item.image] : [],
-        },
-        unit_amount: Math.round(item.price), // já deve estar em centavos
+  const line_items = items.map(item => ({
+    price_data: {
+      currency: 'eur',
+      product_data: {
+        name: item.name,
+        images: item.image ? [item.image] : [],
       },
-      quantity: item.quantity || 1,
-    }));
+      unit_amount: item.price,
+    },
+    quantity: item.quantity || 1
+  }));
 
+  try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['ideal', 'klarna', 'card'],
       line_items,
       mode: 'payment',
-      success_url: 'https://aveneli.com/pages/sucesso',
-      cancel_url: 'https://aveneli.com/pages/cancelado',
+      success_url: 'https://aveneli.com/pages/success',
+      cancel_url: 'https://aveneli.com/pages/cancel',
     });
 
     res.json({ checkout_url: session.url });
@@ -42,13 +42,14 @@ app.post('/checkout', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.send('API Stripe Klarna/iDEAL funcionando!');
+  res.send('API Stripe Klarna/IDeal funcionando!');
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
+
 
 
 // Inicializa o servidor
