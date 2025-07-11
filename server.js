@@ -18,9 +18,9 @@ app.post('/checkout', async (req, res) => {
         currency: 'eur',
         product_data: {
           name: item.name,
-          images: item.image ? [item.image] : [], // garante que image nunca será inválido
+          images: item.image ? [item.image] : [],
         },
-        unit_amount: item.price, // já está em centavos
+        unit_amount: item.price,
       },
       quantity: item.quantity,
     }));
@@ -44,12 +44,7 @@ app.get('/', (req, res) => {
   res.send('API Stripe Klarna/IDeal funcionando!');
 });
 
-// ✅ Aqui está a declaração do PORT, agora apenas UMA vez:
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
-
+// ✅ PORT declarado apenas uma vez:
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
