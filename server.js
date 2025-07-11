@@ -6,48 +6,50 @@ const cors = require('cors');
 app.use(cors());
 app.use(express.json());
 
-// Endpoint para checkout
 app.post('/checkout', async (req, res) => {
-  const { amount, quantity, description, image } = req.body;
-
-  // Validação básica
-  if (!amount || !quantity || !description) {
-    return res.status(400).json({ error: 'Dados incompletos' });
-  }
+  const { items } = req.body;
 
   try {
-    // Cria a sessão de checkout
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Itens inválidos no corpo da requisição.' });
+    }
+
+    const line_items = items.map(item => ({
+      price_data: {
+        currency: 'eur',
+        product_data: {
+          name: item.name || 'Produto',
+          images: item.image ? [item.image] : [],
+        },
+        unit_amount: Math.round(item.price), // já deve estar em centavos
+      },
+      quantity: item.quantity || 1,
+    }));
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['ideal', 'klarna', 'card'],
-      line_items: [
-        {
-          price_data: {
-            currency: 'eur',
-            product_data: {
-              name: description,
-              ...(image && { images: [image] }),
-            },
-            unit_amount: Math.round(amount * 100), // Centavos de euro
-          },
-          quantity: quantity,
-        },
-      ],
+      line_items,
       mode: 'payment',
-      success_url: 'https://aveneli.com/pages/success',
-      cancel_url: 'https://aveneli.com/pages/cancel',
+      success_url: 'https://aveneli.com/pages/sucesso',
+      cancel_url: 'https://aveneli.com/pages/cancelado',
     });
 
     res.json({ checkout_url: session.url });
   } catch (err) {
-    console.error('Erro ao criar sessão de checkout:', err);
+    console.error('Erro ao criar checkout:', err);
     res.status(500).json({ error: 'Erro ao criar sessão de checkout' });
   }
 });
 
-// Página base da API
 app.get('/', (req, res) => {
   res.send('API Stripe Klarna/iDEAL funcionando!');
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});
+
 
 // Inicializa o servidor
 const PORT = process.env.PORT || 3000;
