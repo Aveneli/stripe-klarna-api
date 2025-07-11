@@ -7,6 +7,7 @@ app.use(cors());
 app.use(express.json());
 
 app.post('/checkout', async (req, res) => {
+  console.log("Body recebido:", JSON.stringify(req.body, null, 2)); // <-- adiciona este log
   const { items } = req.body;
 
   try {
@@ -19,7 +20,7 @@ app.post('/checkout', async (req, res) => {
             name: item.name,
             images: [item.image],
           },
-          unit_amount: item.price, // já está em centavos!
+          unit_amount: item.price,
         },
         quantity: item.quantity,
       })),
@@ -34,6 +35,7 @@ app.post('/checkout', async (req, res) => {
     res.status(500).json({ error: 'Erro ao criar sessão de checkout' });
   }
 });
+
 
 app.get('/', (req, res) => {
   res.send('API Stripe Klarna/IDeal funcionando!');
