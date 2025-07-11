@@ -9,6 +9,7 @@ app.use(express.json());
 app.post('/checkout', async (req, res) => {
   console.log("Body recebido:", JSON.stringify(req.body, null, 2)); // <-- adiciona este log
   const { items } = req.body;
+  console.log('Itens formatados para Stripe:', JSON.stringify(items, null, 2));
 
   try {
     const session = await stripe.checkout.sessions.create({
