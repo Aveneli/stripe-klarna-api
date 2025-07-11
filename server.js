@@ -16,10 +16,10 @@ app.post('/checkout', async (req, res) => {
       line_items: items.map(item => ({
         price_data: {
           currency: 'eur',
-          product_data: {
-            name: item.name,
-            images: [item.image],
-          },
+        product_data: {
+  name: item.name,
+  images: item.image ? [item.image] : [], // usa a imagem se existir, senão manda array vazio
+},
           unit_amount: item.price,
         },
         quantity: item.quantity,
