@@ -1,18 +1,54 @@
 const express = require('express');
 const app = express();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const axios = require('axios');
 const cors = require('cors');
 
 app.use(cors());
 app.use(express.json());
 
-app.post('/checkout', async (req, res) => {
-  console.log("Body recebido:", JSON.stringify(req.body, null, 2));
-  const { items } = req.body;
+// ✅ Cria pedido na Shopify e inicia o checkout da Stripe
+app.post('/create-order', async (req, res) => {
+  const { items, customer } = req.body;
+
+  if (!items || !customer || !customer.email || !customer.name || !customer.address) {
+    return res.status(400).json({ error: 'Dados incompletos para criar pedido' });
+  }
 
   try {
-    console.log('Itens formatados para Stripe:', JSON.stringify(items, null, 2));
+    // 👉 1. Cria o pedido na Shopify
+    const shopifyOrder = await axios.post(
+      'https://aveneli.com/admin/api/2024-01/orders.json',
+      {
+        order: {
+          email: customer.email,
+          send_receipt: true,
+          send_fulfillment_receipt: true,
+          customer: {
+            first_name: customer.name.split(' ')[0],
+            last_name: customer.name.split(' ').slice(1).join(' ') || '',
+            email: customer.email
+          },
+          shipping_address: customer.address,
+          line_items: items.map(item => ({
+            title: item.name,
+            price: (item.price / 100).toFixed(2),
+            quantity: item.quantity
+          })),
+          financial_status: 'pending'
+        }
+      },
+      {
+        headers: {
+          'X-Shopify-Access-Token': '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',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
+    console.log('Pedido criado na Shopify:', shopifyOrder.data.order.id);
+
+    // 👉 2. Cria o checkout Stripe
     const stripeItems = items.map(item => ({
       price_data: {
         currency: 'eur',
@@ -35,14 +71,20 @@ app.post('/checkout', async (req, res) => {
 
     res.json({ checkout_url: session.url });
   } catch (err) {
-    console.error('Erro ao criar checkout:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Erro ao criar pedido ou checkout:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Erro ao criar pedido ou checkout' });
   }
 });
 
 app.get('/', (req, res) => {
-  res.send('API Stripe Klarna/IDeal funcionando!');
+  res.send('API Stripe Klarna/iDEAL funcionando com criação de pedidos Shopify');
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});
+
 
 // ✅ PORT declarado apenas uma vez:
 const PORT = process.env.PORT || 3000;
