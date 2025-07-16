@@ -4,9 +4,56 @@ const app = express();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const axios = require('axios');
 const cors = require('cors');
+const bodyParser = require('body-parser');
+const crypto = require('crypto');
 
 app.use(cors());
 app.use(express.json());
+
+// Para o webhook funcionar corretamente com a verificação de assinatura
+app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+  } catch (err) {
+    console.error('Erro na verificação do webhook:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+
+    console.log('Pagamento confirmado! Enviando evento para Meta...');
+
+    // Envie evento para a Meta (API de Conversões)
+    axios.post(`https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`, {
+      data: [{
+        event_name: 'Purchase',
+        event_time: Math.floor(Date.now() / 1000),
+        action_source: 'website',
+        event_source_url: 'https://aveneli.com',
+        user_data: {
+          em: [session.customer_email ? crypto.createHash('sha256').update(session.customer_email).digest('hex') : ''],
+        },
+        custom_data: {
+          currency: session.currency.toUpperCase(),
+          value: (session.amount_total / 100).toFixed(2)
+        }
+      }],
+      access_token: process.env.META_ACCESS_TOKEN
+    }).then(() => {
+      console.log('Evento enviado com sucesso para Meta!');
+    }).catch(err => {
+      console.error('Erro ao enviar evento para Meta:', err.response?.data || err.message);
+    });
+  }
+
+  res.json({ received: true });
+});
 
 app.post('/create-order', async (req, res) => {
   const { items, customer } = req.body;
@@ -16,7 +63,6 @@ app.post('/create-order', async (req, res) => {
   }
 
   try {
-    // 1. Cria pedido na Shopify
     const shopifyOrder = await axios.post(
       'https://aveneli.com/admin/api/2024-01/orders.json',
       {
@@ -48,7 +94,6 @@ app.post('/create-order', async (req, res) => {
 
     console.log('Pedido criado na Shopify:', shopifyOrder.data.order.id);
 
-    // 2. Cria sessão Stripe
     const stripeItems = items.map(item => ({
       price_data: {
         currency: 'eur',
@@ -65,6 +110,7 @@ app.post('/create-order', async (req, res) => {
       payment_method_types: ['ideal', 'klarna', 'card'],
       line_items: stripeItems,
       mode: 'payment',
+      customer_email: customer.email,
       success_url: 'https://aveneli.com/pages/sucesso',
       cancel_url: 'https://aveneli.com/pages/cancelado',
     });
@@ -84,3 +130,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
+
