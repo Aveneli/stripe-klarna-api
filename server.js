@@ -8,9 +8,8 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 
 app.use(cors());
-app.use(express.json());
 
-// Para o webhook funcionar corretamente com a verificação de assinatura
+// ⚠️ NÃO usar express.json() antes do webhook!
 app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
   const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -27,9 +26,8 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
-    console.log('Pagamento confirmado! Enviando evento para Meta...');
+    console.log('✅ Pagamento confirmado! Enviando evento para Meta...');
 
-    // Envie evento para a Meta (API de Conversões)
     axios.post(`https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`, {
       data: [{
         event_name: 'Purchase',
@@ -46,14 +44,17 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
       }],
       access_token: process.env.META_ACCESS_TOKEN
     }).then(() => {
-      console.log('Evento enviado com sucesso para Meta!');
+      console.log('🎉 Evento enviado com sucesso para Meta!');
     }).catch(err => {
-      console.error('Erro ao enviar evento para Meta:', err.response?.data || err.message);
+      console.error('❌ Erro ao enviar evento para Meta:', err.response?.data || err.message);
     });
   }
 
   res.json({ received: true });
 });
+
+// ✅ Agora sim, ativar o JSON depois do webhook
+app.use(express.json());
 
 app.post('/create-order', async (req, res) => {
   const { items, customer } = req.body;
@@ -92,7 +93,7 @@ app.post('/create-order', async (req, res) => {
       }
     );
 
-    console.log('Pedido criado na Shopify:', shopifyOrder.data.order.id);
+    console.log('🛒 Pedido criado na Shopify:', shopifyOrder.data.order.id);
 
     const stripeItems = items.map(item => ({
       price_data: {
@@ -117,14 +118,20 @@ app.post('/create-order', async (req, res) => {
 
     res.json({ checkout_url: session.url });
   } catch (err) {
-    console.error('Erro ao criar pedido ou checkout:', err.response?.data || err.message);
+    console.error('❌ Erro ao criar pedido ou checkout:', err.response?.data || err.message);
     res.status(500).json({ error: 'Erro ao criar pedido ou checkout' });
   }
 });
 
 app.get('/', (req, res) => {
-  res.send('API Stripe Klarna/iDEAL funcionando com criação de pedidos Shopify');
+  res.send('✅ API Stripe Klarna/iDEAL funcionando com criação de pedidos Shopify');
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
