@@ -1,3 +1,4 @@
+// server.js
 const express = require('express');
 const app = express();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -7,7 +8,6 @@ const cors = require('cors');
 app.use(cors());
 app.use(express.json());
 
-// ✅ Cria pedido na Shopify e inicia o checkout da Stripe
 app.post('/create-order', async (req, res) => {
   const { items, customer } = req.body;
 
@@ -16,7 +16,7 @@ app.post('/create-order', async (req, res) => {
   }
 
   try {
-    // 👉 1. Cria o pedido na Shopify
+    // 1. Cria pedido na Shopify
     const shopifyOrder = await axios.post(
       'https://aveneli.com/admin/api/2024-01/orders.json',
       {
@@ -40,7 +40,7 @@ app.post('/create-order', async (req, res) => {
       },
       {
         headers: {
-          'X-Shopify-Access-Token': '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',
+          'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN,
           'Content-Type': 'application/json'
         }
       }
@@ -48,7 +48,7 @@ app.post('/create-order', async (req, res) => {
 
     console.log('Pedido criado na Shopify:', shopifyOrder.data.order.id);
 
-    // 👉 2. Cria o checkout Stripe
+    // 2. Cria sessão Stripe
     const stripeItems = items.map(item => ({
       price_data: {
         currency: 'eur',
@@ -80,13 +80,6 @@ app.get('/', (req, res) => {
   res.send('API Stripe Klarna/iDEAL funcionando com criação de pedidos Shopify');
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
-
-
-// ✅ PORT declarado apenas uma vez:
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
