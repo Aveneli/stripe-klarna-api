@@ -53,10 +53,11 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
   res.json({ received: true });
 });
 
-// ✅ Agora sim, ativar o JSON depois do webhook
+// ✅ Ativa o parser JSON após o webhook
 app.use(express.json());
 
-app.post('/create-order', async (req, res) => {
+// ✅ Rota que o front-end usa (checkout)
+app.post('/checkout', async (req, res) => {
   const { items, customer } = req.body;
 
   if (!items || !customer || !customer.email || !customer.name || !customer.address) {
@@ -64,6 +65,7 @@ app.post('/create-order', async (req, res) => {
   }
 
   try {
+    // Cria o pedido na Shopify
     const shopifyOrder = await axios.post(
       'https://aveneli.com/admin/api/2024-01/orders.json',
       {
@@ -95,6 +97,7 @@ app.post('/create-order', async (req, res) => {
 
     console.log('🛒 Pedido criado na Shopify:', shopifyOrder.data.order.id);
 
+    // Cria sessão do Stripe
     const stripeItems = items.map(item => ({
       price_data: {
         currency: 'eur',
@@ -123,11 +126,12 @@ app.post('/create-order', async (req, res) => {
   }
 });
 
+// ✅ Mensagem simples na raiz
 app.get('/', (req, res) => {
   res.send('✅ API Stripe Klarna/iDEAL funcionando com criação de pedidos Shopify');
 });
 
-// ✅ Inicialização do servidor (mantida apenas uma vez!)
+// ✅ Inicializa servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
