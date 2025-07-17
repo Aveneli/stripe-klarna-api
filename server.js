@@ -7,27 +7,23 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 
-app.use(cors());
-
-// ⚠️ NÃO usar express.json() antes do webhook!
+// Webhook precisa ser raw
 app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
   const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   let event;
-
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
   } catch (err) {
-    console.error('Erro na verificação do webhook:', err.message);
+    console.error('Erro no webhook:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
-    console.log('✅ Pagamento confirmado! Enviando evento para Meta...');
-
+    // Envia evento de compra para Meta Pixel
     axios.post(`https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`, {
       data: [{
         event_name: 'Purchase',
@@ -35,7 +31,7 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
         action_source: 'website',
         event_source_url: 'https://aveneli.com',
         user_data: {
-          em: [session.customer_email ? crypto.createHash('sha256').update(session.customer_email).digest('hex') : ''],
+          em: [crypto.createHash('sha256').update(session.customer_email).digest('hex')],
         },
         custom_data: {
           currency: session.currency.toUpperCase(),
@@ -44,47 +40,31 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
       }],
       access_token: process.env.META_ACCESS_TOKEN
     }).then(() => {
-      console.log('🎉 Evento enviado com sucesso para Meta!');
+      console.log('✅ Evento enviado para Meta.');
     }).catch(err => {
-      console.error('❌ Erro ao enviar evento para Meta:', err.response?.data || err.message);
+      console.error('❌ Erro ao enviar para Meta:', err.response?.data || err.message);
     });
-  }
 
-  res.json({ received: true });
-});
-
-// ✅ Ativa o parser JSON após o webhook
-app.use(express.json());
-
-// ✅ Rota que o front-end usa (checkout)
-app.post('/checkout', async (req, res) => {
-  const { items, customer } = req.body;
-
-  if (!items || !customer || !customer.email || !customer.name || !customer.address) {
-    return res.status(400).json({ error: 'Dados incompletos para criar pedido' });
-  }
-
-  try {
-    // Cria o pedido na Shopify
-    const shopifyOrder = await axios.post(
+    // Cria pedido na Shopify
+    axios.post(
       'https://aveneli.com/admin/api/2024-01/orders.json',
       {
         order: {
-          email: customer.email,
+          email: session.customer_email,
           send_receipt: true,
           send_fulfillment_receipt: true,
+          line_items: session.display_items?.map(item => ({
+            title: item.custom.name,
+            quantity: item.quantity,
+            price: (item.amount / 100).toFixed(2)
+          })) || [],
+          financial_status: 'paid',
+          shipping_address: session.customer_details?.address || {},
           customer: {
-            first_name: customer.name.split(' ')[0],
-            last_name: customer.name.split(' ').slice(1).join(' ') || '',
-            email: customer.email
-          },
-          shipping_address: customer.address,
-          line_items: items.map(item => ({
-            title: item.name,
-            price: (item.price / 100).toFixed(2),
-            quantity: item.quantity
-          })),
-          financial_status: 'pending'
+            first_name: session.customer_details?.name?.split(' ')[0] || '',
+            last_name: session.customer_details?.name?.split(' ').slice(1).join(' ') || '',
+            email: session.customer_email
+          }
         }
       },
       {
@@ -93,46 +73,69 @@ app.post('/checkout', async (req, res) => {
           'Content-Type': 'application/json'
         }
       }
-    );
+    ).then(res => {
+      console.log('🛍️ Pedido criado na Shopify.');
+    }).catch(err => {
+      console.error('❌ Erro ao criar pedido na Shopify:', err.response?.data || err.message);
+    });
+  }
 
-    console.log('🛒 Pedido criado na Shopify:', shopifyOrder.data.order.id);
+  res.json({ received: true });
+});
 
-    // Cria sessão do Stripe
+// Parser JSON ativado depois do webhook
+app.use(cors());
+app.use(express.json());
+
+// Endpoint para criar sessão Stripe (checkout)
+app.post('/checkout', async (req, res) => {
+  const { items } = req.body;
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Itens do carrinho são obrigatórios' });
+  }
+
+  try {
     const stripeItems = items.map(item => ({
       price_data: {
         currency: 'eur',
         product_data: {
           name: item.name,
-          images: item.image ? [item.image] : [],
+          images: item.image ? [item.image] : []
         },
-        unit_amount: item.price,
+        unit_amount: item.price
       },
-      quantity: item.quantity,
+      quantity: item.quantity
     }));
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['ideal', 'klarna', 'card'],
-      line_items: stripeItems,
       mode: 'payment',
-      customer_email: customer.email,
+      line_items: stripeItems,
+      customer_creation: 'always',
+      billing_address_collection: 'required',
+      shipping_address_collection: {
+        allowed_countries: ['NL', 'BE', 'DE', 'FR', 'IT', 'ES', 'PT'] // adapte se quiser
+      },
       success_url: 'https://aveneli.com/pages/sucesso',
-      cancel_url: 'https://aveneli.com/pages/cancelado',
+      cancel_url: 'https://aveneli.com/pages/cancelado'
     });
 
     res.json({ checkout_url: session.url });
   } catch (err) {
-    console.error('❌ Erro ao criar pedido ou checkout:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Erro ao criar pedido ou checkout' });
+    console.error('Erro ao criar checkout:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Erro ao criar checkout' });
   }
 });
 
-// ✅ Mensagem simples na raiz
+// Página inicial simples
 app.get('/', (req, res) => {
-  res.send('✅ API Stripe Klarna/iDEAL funcionando com criação de pedidos Shopify');
+  res.send('✅ API Stripe Klarna/iDEAL rodando e integrada com Shopify + Meta Pixel');
 });
 
-// ✅ Inicializa servidor
+// Inicia servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
+
