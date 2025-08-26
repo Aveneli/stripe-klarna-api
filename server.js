@@ -7,7 +7,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 
-// Webhook precisa ser raw
+// ================= WEBHOOK STRIPE =================
 app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
   const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -16,14 +16,14 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
   } catch (err) {
-    console.error('Erro no webhook:', err.message);
+    console.error('❌ Erro no webhook:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
-    // Envia evento de compra para Meta Pixel
+    // ===== Envia evento para Meta Pixel =====
     axios.post(`https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`, {
       data: [{
         event_name: 'Purchase',
@@ -45,7 +45,7 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
       console.error('❌ Erro ao enviar para Meta:', err.response?.data || err.message);
     });
 
-    // Cria pedido na Shopify
+    // ===== Cria pedido na Shopify =====
     axios.post(
       'https://aveneli.com/admin/api/2024-01/orders.json',
       {
@@ -54,7 +54,7 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
           send_receipt: true,
           send_fulfillment_receipt: true,
           line_items: session.display_items?.map(item => ({
-            title: item.custom.name,
+            title: item.custom?.name || 'Produto',
             quantity: item.quantity,
             price: (item.amount / 100).toFixed(2)
           })) || [],
@@ -73,7 +73,7 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
           'Content-Type': 'application/json'
         }
       }
-    ).then(res => {
+    ).then(() => {
       console.log('🛍️ Pedido criado na Shopify.');
     }).catch(err => {
       console.error('❌ Erro ao criar pedido na Shopify:', err.response?.data || err.message);
@@ -83,11 +83,11 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
   res.json({ received: true });
 });
 
-// Parser JSON ativado depois do webhook
+// ================= MIDDLEWARES =================
 app.use(cors());
 app.use(express.json());
 
-// Endpoint para criar sessão Stripe (checkout)
+// ================= ENDPOINT CHECKOUT =================
 app.post('/checkout', async (req, res) => {
   const { items } = req.body;
 
@@ -109,33 +109,40 @@ app.post('/checkout', async (req, res) => {
     }));
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['ideal', 'klarna', 'card'],
+      payment_method_types: ['klarna', 'ideal', 'card'],
       mode: 'payment',
       line_items: stripeItems,
       customer_creation: 'always',
+
+      // 🚀 Aqui forçamos coleta de dados essenciais
       billing_address_collection: 'required',
       shipping_address_collection: {
-        allowed_countries: ['NL', 'BE', 'DE', 'FR', 'IT', 'ES', 'PT'] // adapte se quiser
+        allowed_countries: ['NL', 'BE', 'DE', 'FR', 'IT', 'ES', 'PT', 'US', 'CA', 'GB']
       },
+      customer_update: {
+        name: 'auto',
+        address: 'auto',
+        shipping: 'auto'
+      },
+
       success_url: 'https://aveneli.com/pages/sucesso',
       cancel_url: 'https://aveneli.com/pages/cancelado'
     });
 
     res.json({ checkout_url: session.url });
   } catch (err) {
-    console.error('Erro ao criar checkout:', err.response?.data || err.message);
+    console.error('❌ Erro ao criar checkout:', err.response?.data || err.message);
     res.status(500).json({ error: 'Erro ao criar checkout' });
   }
 });
 
-// Página inicial simples
+// ================= HOME =================
 app.get('/', (req, res) => {
   res.send('✅ API Stripe Klarna/iDEAL rodando e integrada com Shopify + Meta Pixel');
 });
 
-// Inicia servidor
+// ================= START =================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
-
