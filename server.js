@@ -8,7 +8,7 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 
 // ================= WEBHOOK STRIPE =================
-app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
+app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -23,61 +23,63 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
-    // ===== Envia evento para Meta Pixel =====
-    axios.post(`https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`, {
-      data: [{
-        event_name: 'Purchase',
-        event_time: Math.floor(Date.now() / 1000),
-        action_source: 'website',
-        event_source_url: 'https://aveneli.com',
-        user_data: {
-          em: [crypto.createHash('sha256').update(session.customer_email).digest('hex')],
-        },
-        custom_data: {
-          currency: session.currency.toUpperCase(),
-          value: (session.amount_total / 100).toFixed(2)
-        }
-      }],
-      access_token: process.env.META_ACCESS_TOKEN
-    }).then(() => {
-      console.log('✅ Evento enviado para Meta.');
-    }).catch(err => {
-      console.error('❌ Erro ao enviar para Meta:', err.response?.data || err.message);
-    });
+    try {
+      // ===== Busca os itens do checkout para enviar à Shopify =====
+      const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
 
-    // ===== Cria pedido na Shopify =====
-    axios.post(
-      'https://aveneli.com/admin/api/2024-01/orders.json',
-      {
-        order: {
-          email: session.customer_email,
-          send_receipt: true,
-          send_fulfillment_receipt: true,
-          line_items: session.display_items?.map(item => ({
-            title: item.custom?.name || 'Produto',
-            quantity: item.quantity,
-            price: (item.amount / 100).toFixed(2)
-          })) || [],
-          financial_status: 'paid',
-          shipping_address: session.customer_details?.address || {},
-          customer: {
-            first_name: session.customer_details?.name?.split(' ')[0] || '',
-            last_name: session.customer_details?.name?.split(' ').slice(1).join(' ') || '',
-            email: session.customer_email
+      // ===== Envia evento para Meta Pixel =====
+      await axios.post(`https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`, {
+        data: [{
+          event_name: 'Purchase',
+          event_time: Math.floor(Date.now() / 1000),
+          action_source: 'website',
+          event_source_url: 'https://aveneli.com',
+          user_data: {
+            em: [crypto.createHash('sha256').update(session.customer_email).digest('hex')],
+          },
+          custom_data: {
+            currency: session.currency.toUpperCase(),
+            value: (session.amount_total / 100).toFixed(2)
+          }
+        }],
+        access_token: process.env.META_ACCESS_TOKEN
+      });
+      console.log('✅ Evento enviado para Meta.');
+
+      // ===== Cria pedido na Shopify =====
+      await axios.post(
+        'https://aveneli.com/admin/api/2024-01/orders.json',
+        {
+          order: {
+            email: session.customer_email,
+            send_receipt: true,
+            send_fulfillment_receipt: true,
+            line_items: lineItems.data.map(item => ({
+              title: item.description || 'Produto',
+              quantity: item.quantity,
+              price: (item.amount_total / 100).toFixed(2)
+            })),
+            financial_status: 'paid',
+            shipping_address: session.customer_details?.address || {},
+            customer: {
+              first_name: session.customer_details?.name?.split(' ')[0] || '',
+              last_name: session.customer_details?.name?.split(' ').slice(1).join(' ') || '',
+              email: session.customer_email
+            }
+          }
+        },
+        {
+          headers: {
+            'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN,
+            'Content-Type': 'application/json'
           }
         }
-      },
-      {
-        headers: {
-          'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN,
-          'Content-Type': 'application/json'
-        }
-      }
-    ).then(() => {
+      );
       console.log('🛍️ Pedido criado na Shopify.');
-    }).catch(err => {
-      console.error('❌ Erro ao criar pedido na Shopify:', err.response?.data || err.message);
-    });
+
+    } catch (err) {
+      console.error('❌ Erro no webhook:', err.response?.data || err.message);
+    }
   }
 
   res.json({ received: true });
@@ -114,15 +116,10 @@ app.post('/checkout', async (req, res) => {
       line_items: stripeItems,
       customer_creation: 'always',
 
-      // 🚀 Aqui forçamos coleta de dados essenciais
+      // 🚀 Coleta apenas dados essenciais
       billing_address_collection: 'required',
       shipping_address_collection: {
         allowed_countries: ['NL', 'BE', 'DE', 'FR', 'IT', 'ES', 'PT', 'US', 'CA', 'GB']
-      },
-      customer_update: {
-        name: 'auto',
-        address: 'auto',
-        shipping: 'auto'
       },
 
       success_url: 'https://aveneli.com/pages/sucesso',
@@ -146,3 +143,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
+
