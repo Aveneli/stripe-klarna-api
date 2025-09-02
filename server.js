@@ -111,18 +111,18 @@ app.post('/checkout', async (req, res) => {
     }));
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['klarna', 'ideal', 'card'],
-      mode: 'payment',
-      line_items: stripeItems,
-      customer_email: email, // pega do front
-      customer_creation: 'always',
-      billing_address_collection: 'required',
-      shipping_address_collection: {
-        allowed_countries: ['NL', 'BE', 'DE', 'FR', 'IT', 'ES', 'PT', 'US', 'CA', 'GB']
-      },
-      success_url: 'https://aveneli.com/pages/sucesso',
-      cancel_url: 'https://aveneli.com/pages/cancelado'
-    });
+  payment_method_types: ['klarna', 'ideal', 'card'],
+  mode: 'payment',
+  line_items: stripeItems,
+  ...(email ? { customer_email: email } : {}), // 🔥 só adiciona se existir
+  customer_creation: 'always',
+  billing_address_collection: 'required',
+  shipping_address_collection: {
+    allowed_countries: ['NL', 'BE', 'DE', 'FR', 'IT', 'ES', 'PT', 'US', 'CA', 'GB']
+  },
+  success_url: 'https://aveneli.com/pages/sucesso',
+  cancel_url: 'https://aveneli.com/pages/cancelado'
+});
 
     // ===== Envia evento InitiateCheckout e AddPaymentInfo para Meta Pixel =====
     const hashedEmail = email ? crypto.createHash('sha256').update(email).digest('hex') : null;
