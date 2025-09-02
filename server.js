@@ -27,7 +27,7 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, r
       // ===== Busca os itens do checkout para enviar à Shopify =====
       const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
 
-      // ===== Envia evento para Meta Pixel =====
+      // ===== Envia evento de Purchase para Meta Pixel =====
       await axios.post(`https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`, {
         data: [{
           event_name: 'Purchase',
@@ -44,7 +44,7 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, r
         }],
         access_token: process.env.META_ACCESS_TOKEN
       });
-      console.log('✅ Evento enviado para Meta.');
+      console.log('✅ Evento Purchase enviado para Meta.');
 
       // ===== Cria pedido na Shopify =====
       await axios.post(
@@ -91,7 +91,7 @@ app.use(express.json());
 
 // ================= ENDPOINT CHECKOUT =================
 app.post('/checkout', async (req, res) => {
-  const { items } = req.body;
+  const { items, email } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Itens do carrinho são obrigatórios' });
@@ -114,23 +114,60 @@ app.post('/checkout', async (req, res) => {
       payment_method_types: ['klarna', 'ideal', 'card'],
       mode: 'payment',
       line_items: stripeItems,
+      customer_email: email, // pega do front
       customer_creation: 'always',
-
-      // 🚀 Coleta apenas dados essenciais
       billing_address_collection: 'required',
       shipping_address_collection: {
         allowed_countries: ['NL', 'BE', 'DE', 'FR', 'IT', 'ES', 'PT', 'US', 'CA', 'GB']
       },
-
       success_url: 'https://aveneli.com/pages/sucesso',
       cancel_url: 'https://aveneli.com/pages/cancelado'
     });
+
+    // ===== Envia evento InitiateCheckout e AddPaymentInfo para Meta Pixel =====
+    const hashedEmail = email ? crypto.createHash('sha256').update(email).digest('hex') : null;
+
+    await axios.post(`https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`, {
+      data: [
+        {
+          event_name: 'InitiateCheckout',
+          event_time: Math.floor(Date.now() / 1000),
+          action_source: 'website',
+          event_source_url: 'https://aveneli.com',
+          user_data: hashedEmail ? { em: [hashedEmail] } : {},
+          custom_data: {
+            currency: 'EUR',
+            value: stripeItems.reduce((acc, item) => acc + (item.price_data.unit_amount / 100) * item.quantity, 0).toFixed(2)
+          }
+        },
+        {
+          event_name: 'AddPaymentInfo',
+          event_time: Math.floor(Date.now() / 1000),
+          action_source: 'website',
+          event_source_url: 'https://aveneli.com',
+          user_data: hashedEmail ? { em: [hashedEmail] } : {},
+          custom_data: {
+            currency: 'EUR',
+            value: stripeItems.reduce((acc, item) => acc + (item.price_data.unit_amount / 100) * item.quantity, 0).toFixed(2),
+            payment_method: 'klarna/ideal/card'
+          }
+        }
+      ],
+      access_token: process.env.META_ACCESS_TOKEN
+    });
+
+    console.log('✅ Eventos InitiateCheckout e AddPaymentInfo enviados para Meta.');
 
     res.json({ checkout_url: session.url });
   } catch (err) {
     console.error('❌ Erro ao criar checkout:', err.response?.data || err.message);
     res.status(500).json({ error: 'Erro ao criar checkout' });
   }
+});
+
+// ================= HEALTH =================
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
 });
 
 // ================= HOME =================
@@ -143,4 +180,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
-
