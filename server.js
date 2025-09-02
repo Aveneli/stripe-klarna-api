@@ -117,6 +117,8 @@ app.post("/checkout", async (req, res) => {
   }
 
   try {
+    console.log("📦 Items recebidos:", items);
+
     const stripeItems = items.map((item) => ({
       price_data: {
         currency: "eur", // ✅ força euro
@@ -124,13 +126,13 @@ app.post("/checkout", async (req, res) => {
           name: item.name,
           images: item.image ? [item.image] : [],
         },
-        unit_amount: item.price, // front já envia em centavos
+        unit_amount: item.price, // ⚠️ garantir que front envia em centavos
       },
       quantity: item.quantity,
     }));
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card", "klarna", "ideal"], // ✅ ordem ajustada
+      payment_method_types: ["card", "klarna", "ideal"],
       mode: "payment",
       line_items: stripeItems,
       ...(email ? { customer_email: email } : {}),
@@ -147,64 +149,75 @@ app.post("/checkout", async (req, res) => {
           "FI",
           "AT",
           "IE",
-        ], // ✅ só países suportados por Klarna/iDEAL
+        ],
       },
       success_url: "https://aveneli.com/pages/sucesso",
       cancel_url: "https://aveneli.com/pages/cancelado",
     });
 
-    // ===== Envia evento InitiateCheckout e AddPaymentInfo para Meta Pixel =====
-    const hashedEmail = email
-      ? crypto.createHash("sha256").update(email).digest("hex")
-      : null;
-
-    await axios.post(
-      `https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`,
-      {
-        data: [
-          {
-            event_name: "InitiateCheckout",
-            event_time: Math.floor(Date.now() / 1000),
-            action_source: "website",
-            event_source_url: "https://aveneli.com",
-            user_data: hashedEmail ? { em: [hashedEmail] } : {},
-            custom_data: {
-              currency: "EUR",
-              value: stripeItems
-                .reduce(
-                  (acc, item) =>
-                    acc + (item.price_data.unit_amount / 100) * item.quantity,
-                  0
-                )
-                .toFixed(2),
-            },
-          },
-          {
-            event_name: "AddPaymentInfo",
-            event_time: Math.floor(Date.now() / 1000),
-            action_source: "website",
-            event_source_url: "https://aveneli.com",
-            user_data: hashedEmail ? { em: [hashedEmail] } : {},
-            custom_data: {
-              currency: "EUR",
-              value: stripeItems
-                .reduce(
-                  (acc, item) =>
-                    acc + (item.price_data.unit_amount / 100) * item.quantity,
-                  0
-                )
-                .toFixed(2),
-              payment_method: "klarna/ideal/card",
-            },
-          },
-        ],
-        access_token: process.env.META_ACCESS_TOKEN,
-      }
-    );
-
-    console.log("✅ Eventos InitiateCheckout e AddPaymentInfo enviados para Meta.");
-
+    // ✅ responde primeiro ao cliente
     res.json({ checkout_url: session.url });
+
+    // 🚀 envia eventos Meta de forma assíncrona (não bloqueia o fluxo)
+    if (process.env.META_PIXEL_ID && process.env.META_ACCESS_TOKEN) {
+      const hashedEmail = email
+        ? crypto.createHash("sha256").update(email).digest("hex")
+        : null;
+
+      axios
+        .post(
+          `https://graph.facebook.com/v19.0/${process.env.META_PIXEL_ID}/events`,
+          {
+            data: [
+              {
+                event_name: "InitiateCheckout",
+                event_time: Math.floor(Date.now() / 1000),
+                action_source: "website",
+                event_source_url: "https://aveneli.com",
+                user_data: hashedEmail ? { em: [hashedEmail] } : {},
+                custom_data: {
+                  currency: "EUR",
+                  value: stripeItems
+                    .reduce(
+                      (acc, item) =>
+                        acc +
+                        (item.price_data.unit_amount / 100) * item.quantity,
+                      0
+                    )
+                    .toFixed(2),
+                },
+              },
+              {
+                event_name: "AddPaymentInfo",
+                event_time: Math.floor(Date.now() / 1000),
+                action_source: "website",
+                event_source_url: "https://aveneli.com",
+                user_data: hashedEmail ? { em: [hashedEmail] } : {},
+                custom_data: {
+                  currency: "EUR",
+                  value: stripeItems
+                    .reduce(
+                      (acc, item) =>
+                        acc +
+                        (item.price_data.unit_amount / 100) * item.quantity,
+                      0
+                    )
+                    .toFixed(2),
+                  payment_method: "klarna/ideal/card",
+                },
+              },
+            ],
+            access_token: process.env.META_ACCESS_TOKEN,
+          }
+        )
+        .then(() => console.log("✅ Eventos enviados para Meta."))
+        .catch((e) =>
+          console.error(
+            "❌ Erro ao enviar eventos Meta:",
+            e.response?.data || e.message
+          )
+        );
+    }
   } catch (err) {
     console.error("❌ Erro ao criar checkout:", err.response?.data || err.message);
     res.status(500).json({ error: "Erro ao criar checkout" });
