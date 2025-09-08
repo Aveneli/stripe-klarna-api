@@ -1,20 +1,19 @@
-# Usa Node versão 20 (alpine é leve)
 FROM node:20-alpine
 
-# Cria diretório de trabalho
 WORKDIR /app
+
+# Instala ferramentas necessárias
+RUN apk add --no-cache make gcc g++ python3
 
 # Copia package.json e package-lock.json
 COPY package*.json ./
 
 # Instala dependências
-RUN npm install --production
+RUN npm install --legacy-peer-deps
 
 # Copia o resto do código
 COPY . .
 
-# Expõe a porta que Fly vai usar
 EXPOSE 3000
 
-# Comando para rodar a API
 CMD ["node", "server.js"]
