@@ -60,47 +60,46 @@ app.post(
         );
         console.log("✅ Evento Purchase enviado para Meta.");
 
-        // ===== Cria pedido na Shopify =====
-        await axios.post(
-          "https://aveneli.com/admin/api/2024-01/orders.json",
-          {
-            order: {
-              email: session.customer_email,
-              send_receipt: true,
-              send_fulfillment_receipt: true,
-              line_items: lineItems.data.map((item) => ({
-                title: item.description || "Produto",
-                quantity: item.quantity,
-                price: (item.amount_total / 100).toFixed(2),
-              })),
-              financial_status: "paid",
-              shipping_address: session.customer_details?.address || {},
-              customer: {
-                first_name:
-                  session.customer_details?.name?.split(" ")[0] || "",
-                last_name:
-                  session.customer_details?.name?.split(" ").slice(1).join(" ") ||
-                  "",
-                email: session.customer_email,
-              },
+      // Criar pedido na Shopify
+async function createShopifyOrder(session) {
+  try {
+    const response = await fetch(
+      "https://15e136-1g.myshopify.com/admin/api/2024-01/orders.json",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": process.env.SHOPIFY_API_TOKEN, // seu shpat_xxx
+        },
+        body: JSON.stringify({
+          order: {
+            email: session.customer_details.email,
+            shipping_address: {
+              first_name: session.customer_details.name?.split(" ")[0] || "",
+              last_name: session.customer_details.name?.split(" ")[1] || "",
+              address1: session.customer_details.address.line1,
+              city: session.customer_details.address.city,
+              country: session.customer_details.address.country,
+              zip: session.customer_details.address.postal_code,
             },
+            line_items: session.display_items?.map((item) => ({
+              title: item.custom.name,
+              price: item.amount_total / 100,
+              quantity: item.quantity,
+            })) || [],
+            financial_status: "paid",
           },
-          {
-            headers: {
-              "X-Shopify-Access-Token": process.env.SHOPIFY_TOKEN,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-        console.log("🛍️ Pedido criado na Shopify.");
-      } catch (err) {
-        console.error("❌ Erro no webhook:", err.response?.data || err.message);
+        }),
       }
-    }
+    );
 
-    res.json({ received: true });
+    const data = await response.json();
+    console.log("Pedido criado na Shopify:", data);
+  } catch (error) {
+    console.error("Erro ao criar pedido na Shopify:", error);
   }
-);
+}
+
 
 // ================= MIDDLEWARES =================
 app.use(cors());
