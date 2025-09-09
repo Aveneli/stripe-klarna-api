@@ -14,6 +14,6 @@ RUN npm install --legacy-peer-deps
 # Copia o resto do código
 COPY . .
 
-EXPOSE 3000
+EXPOSE 8080
 
 CMD ["node", "server.js"]
