@@ -5,7 +5,7 @@ const axios = require("axios");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const crypto = require("crypto");
-const fetch = require("node-fetch"); // necessário para Shopify
+const fetch = require("node-fetch"); // caso use node < 18
 
 // ================= MIDDLEWARES =================
 app.use(cors());
@@ -32,110 +32,96 @@ app.post(
 
       try {
         // ===== Busca os itens do checkout =====
-        const lineItems = await stripe.checkout.sessions.listLineItems(
-          session.id
-        );
+        const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
 
         // ===== Cria pedido na Shopify =====
-        await createShopifyOrder(session, lineItems);
+        try {
+          const response = await fetch(
+            "https://15e136-1g.myshopify.com/admin/api/2024-01/orders.json",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Shopify-Access-Token": process.env.SHOPIFY_API_TOKEN,
+              },
+              body: JSON.stringify({
+                order: {
+                  email: session.customer_email,
+                  shipping_address: session.shipping ? {
+                    first_name: session.shipping.name?.split(" ")[0] || "",
+                    last_name: session.shipping.name?.split(" ")[1] || "",
+                    address1: session.shipping.address.line1,
+                    city: session.shipping.address.city,
+                    country: session.shipping.address.country,
+                    zip: session.shipping.address.postal_code,
+                  } : undefined,
+                  line_items: lineItems.data.map((item) => ({
+                    title: item.description,
+                    price: item.amount_total / 100,
+                    quantity: item.quantity,
+                  })),
+                  financial_status: "paid",
+                },
+              }),
+            }
+          );
 
-        // ===== Envia evento de Purchase para Meta Pixel =====
-        if (session.metadata?.source === "campaign") { // só envia se vier da campanha
-          await sendMetaPurchase(session);
+          const data = await response.json();
+          console.log("✅ Pedido criado na Shopify:", data);
+        } catch (err) {
+          console.error("❌ Erro ao criar pedido na Shopify:", err);
         }
 
-        res.json({ received: true });
+        // ===== Envia evento de Purchase para Meta Pixel =====
+        if (process.env.META_PIXEL_ID && process.env.META_ACCESS_TOKEN) {
+          await axios.post(
+            `https://graph.facebook.com/v20.0/${process.env.META_PIXEL_ID}/events`,
+            {
+              data: [
+                {
+                  event_name: "Purchase",
+                  event_time: Math.floor(Date.now() / 1000),
+                  action_source: "website",
+                  event_source_url: "https://aveneli.com",
+                  user_data: {
+                    em: [
+                      crypto
+                        .createHash("sha256")
+                        .update(session.customer_email)
+                        .digest("hex"),
+                    ],
+                  },
+                  custom_data: {
+                    currency: session.currency.toUpperCase(),
+                    value: (session.amount_total / 100).toFixed(2),
+                  },
+                },
+              ],
+              access_token: process.env.META_ACCESS_TOKEN,
+            }
+          );
+          console.log("✅ Evento Purchase enviado para Meta.");
+        }
+
       } catch (err) {
-        console.error("❌ Erro no webhook:", err);
-        res.status(500).send("Webhook handler error");
+        console.error("❌ Erro no webhook:", err.message);
       }
+
+      res.status(200).send("Webhook recebido");
     } else {
-      res.json({ received: true });
+      res.status(200).send("Evento não tratado");
     }
   }
 );
 
-// ===== Função criar pedido Shopify =====
-async function createShopifyOrder(session, lineItems) {
-  try {
-    const shopifyLineItems = lineItems.data.map((item) => ({
-      title: item.description,
-      quantity: item.quantity,
-      price: (item.amount_total / 100).toFixed(2),
-    }));
-
-    const response = await fetch(
-      "https://15e136-1g.myshopify.com/admin/api/2024-01/orders.json",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": process.env.SHOPIFY_API_TOKEN,
-        },
-        body: JSON.stringify({
-          order: {
-            email: session.customer_email,
-            shipping_address: session.shipping ? {
-              first_name: session.shipping.name?.split(" ")[0] || "",
-              last_name: session.shipping.name?.split(" ")[1] || "",
-              address1: session.shipping.address.line1,
-              city: session.shipping.address.city,
-              country: session.shipping.address.country,
-              zip: session.shipping.address.postal_code,
-            } : undefined,
-            line_items: shopifyLineItems,
-            financial_status: "paid",
-          },
-        }),
-      }
-    );
-
-    const data = await response.json();
-    console.log("✅ Pedido criado na Shopify:", data);
-  } catch (error) {
-    console.error("❌ Erro ao criar pedido na Shopify:", error);
-  }
-}
-
-// ===== Função enviar evento Purchase para Meta =====
-async function sendMetaPurchase(session) {
-  try {
-    const hashedEmail = session.customer_email
-      ? crypto.createHash("sha256").update(session.customer_email).digest("hex")
-      : null;
-
-    await axios.post(
-      `https://graph.facebook.com/v20.0/${process.env.META_PIXEL_ID}/events`,
-      {
-        data: [
-          {
-            event_name: "Purchase",
-            event_time: Math.floor(Date.now() / 1000),
-            action_source: "website",
-            event_source_url: "https://aveneli.com",
-            user_data: hashedEmail ? { em: [hashedEmail] } : {},
-            custom_data: {
-              currency: session.currency.toUpperCase(),
-              value: (session.amount_total / 100).toFixed(2),
-            },
-          },
-        ],
-        access_token: process.env.META_ACCESS_TOKEN,
-      }
-    );
-
-    console.log("✅ Evento Purchase enviado para Meta.");
-  } catch (err) {
-    console.error("❌ Erro ao enviar evento Purchase para Meta:", err.response?.data || err.message);
-  }
-}
-
 // ================= ENDPOINT CHECKOUT =================
 app.post("/checkout", async (req, res) => {
-  const { items, email, source } = req.body;
+  const { items, email } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: "Itens do carrinho são obrigatórios" });
+    return res
+      .status(400)
+      .json({ error: "Itens do carrinho são obrigatórios" });
   }
 
   try {
@@ -144,14 +130,21 @@ app.post("/checkout", async (req, res) => {
     const stripeItems = items.map((item) => ({
       price_data: {
         currency: "eur",
-        product_data: { name: item.name, images: item.image ? [item.image] : [] },
+        product_data: {
+          name: item.name,
+          images: item.image ? [item.image] : [],
+        },
         unit_amount: item.price,
       },
       quantity: item.quantity,
     }));
 
     const totalValue = stripeItems
-      .reduce((acc, item) => acc + (item.price_data.unit_amount / 100) * item.quantity, 0)
+      .reduce(
+        (acc, item) =>
+          acc + (item.price_data.unit_amount / 100) * item.quantity,
+        0
+      )
       .toFixed(2);
 
     const session = await stripe.checkout.sessions.create({
@@ -159,41 +152,102 @@ app.post("/checkout", async (req, res) => {
       mode: "payment",
       line_items: stripeItems,
       ...(email ? { customer_email: email } : {}),
-      metadata: { source: source || "" }, // para saber se veio da campanha
       billing_address_collection: "required",
       shipping_address_collection: {
-        allowed_countries: ["NL","BE","DE","FR","IT","ES","PT","FI","AT","IE"],
+        allowed_countries: [
+          "NL","BE","DE","FR","IT","ES","PT","FI","AT","IE"
+        ],
       },
       success_url: "https://aveneli.com/pages/sucesso",
       cancel_url: "https://aveneli.com/pages/cancelado",
     });
 
-    // Envia evento InitiateCheckout (não bloqueia)
-    if (process.env.META_PIXEL_ID && process.env.META_ACCESS_TOKEN && source === "campaign") {
-      const hashedEmail = email ? crypto.createHash("sha256").update(email).digest("hex") : null;
-      await axios.post(
-        `https://graph.facebook.com/v20.0/${process.env.META_PIXEL_ID}/events`,
-        {
-          data: [
-            {
-              event_name: "InitiateCheckout",
-              event_time: Math.floor(Date.now() / 1000),
-              action_source: "website",
-              event_source_url: "https://aveneli.com",
-              user_data: hashedEmail ? { em: [hashedEmail] } : {},
-              custom_data: { currency: "EUR", value: totalValue },
-            },
-          ],
-          access_token: process.env.META_ACCESS_TOKEN,
-        }
-      );
-      console.log("✅ Evento InitiateCheckout enviado para Meta.");
-    }
+    res.json({
+      checkout_url: session.url,
+      value: totalValue,
+      currency: "EUR",
+      email,
+    });
 
-    res.json({ checkout_url: session.url, value: totalValue, currency: "EUR", email });
+    // Envia evento InitiateCheckout para Meta
+    if (process.env.META_PIXEL_ID && process.env.META_ACCESS_TOKEN) {
+      const hashedEmail = email
+        ? crypto.createHash("sha256").update(email).digest("hex")
+        : null;
+
+      axios
+        .post(
+          `https://graph.facebook.com/v20.0/${process.env.META_PIXEL_ID}/events`,
+          {
+            data: [
+              {
+                event_name: "InitiateCheckout",
+                event_time: Math.floor(Date.now() / 1000),
+                action_source: "website",
+                event_source_url: "https://aveneli.com",
+                user_data: hashedEmail ? { em: [hashedEmail] } : {},
+                custom_data: {
+                  currency: "EUR",
+                  value: totalValue,
+                },
+              },
+            ],
+            access_token: process.env.META_ACCESS_TOKEN,
+          }
+        )
+        .then(() => console.log("✅ Evento InitiateCheckout enviado para Meta."))
+        .catch((e) =>
+          console.error(
+            "❌ Erro ao enviar InitiateCheckout:",
+            e.response?.data || e.message
+          )
+        );
+    }
   } catch (err) {
     console.error("❌ Erro ao criar checkout:", err.response?.data || err.message);
     res.status(500).json({ error: "Erro ao criar checkout" });
+  }
+});
+
+// ================= ENDPOINT ADD PAYMENT INFO =================
+app.post("/add-payment-info", async (req, res) => {
+  const { email, value, currency = "EUR" } = req.body;
+
+  if (!email || !value) {
+    return res.status(400).json({ error: "Email e valor são obrigatórios" });
+  }
+
+  try {
+    const hashedEmail = crypto.createHash("sha256").update(email).digest("hex");
+
+    await axios.post(
+      `https://graph.facebook.com/v20.0/${process.env.META_PIXEL_ID}/events`,
+      {
+        data: [
+          {
+            event_name: "AddPaymentInfo",
+            event_time: Math.floor(Date.now() / 1000),
+            action_source: "website",
+            event_source_url: "https://aveneli.com",
+            user_data: { em: [hashedEmail] },
+            custom_data: {
+              currency,
+              value,
+            },
+          },
+        ],
+        access_token: process.env.META_ACCESS_TOKEN,
+      }
+    );
+
+    console.log("✅ Evento AddPaymentInfo enviado para Meta.");
+    res.json({ success: true });
+  } catch (err) {
+    console.error(
+      "❌ Erro ao enviar AddPaymentInfo:",
+      err.response?.data || err.message
+    );
+    res.status(500).json({ error: "Erro ao enviar AddPaymentInfo" });
   }
 });
 
@@ -207,4 +261,5 @@ app.get("/", (req, res) =>
 
 // ================= START =================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
+
