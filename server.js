@@ -5,11 +5,13 @@ const axios = require("axios");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const crypto = require("crypto");
-const fetch = require("node-fetch"); // para Node < 18
+const fetch = require("node-fetch"); // caso use Node < 18
 
 // ================= MIDDLEWARES =================
 app.use(cors());
-app.use(express.json());
+
+// ⚠️ NÃO colocar express.json() antes do webhook
+// porque o Stripe precisa do raw body para validar a assinatura
 
 // ================= WEBHOOK STRIPE =================
 app.post(
@@ -23,7 +25,7 @@ app.post(
     try {
       event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
     } catch (err) {
-      console.error("❌ Erro no webhook:", err.message);
+      console.error("❌ Erro no webhook Stripe:", err.message);
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
@@ -32,13 +34,40 @@ app.post(
 
       try {
         // ===== Busca os itens do checkout =====
-        const lineItems = await stripe.checkout.sessions.listLineItems(
-          session.id,
-          { expand: ["data.price.product"] } // necessário para pegar o metadata
-        );
+        const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
 
         // ===== Cria pedido na Shopify =====
         try {
+          const payload = {
+            order: {
+              email: session.customer_details?.email,
+              financial_status: "paid",
+              shipping_address: session.customer_details?.address
+                ? {
+                    first_name: session.customer_details.name?.split(" ")[0] || "",
+                    last_name: session.customer_details.name?.split(" ")[1] || "",
+                    address1: session.customer_details.address.line1,
+                    city: session.customer_details.address.city,
+                    country: session.customer_details.address.country,
+                    zip: session.customer_details.address.postal_code,
+                  }
+                : undefined,
+              line_items: lineItems.data.map((item) => {
+                const price =
+                  item.amount_total && item.quantity
+                    ? item.amount_total / 100 / item.quantity
+                    : 0;
+                return {
+                  title: item.description,
+                  quantity: item.quantity,
+                  price: Number(price.toFixed(2)), // Shopify espera número decimal
+                };
+              }),
+            },
+          };
+
+          console.log("📤 Enviando pedido para Shopify:", JSON.stringify(payload, null, 2));
+
           const response = await fetch(
             `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2024-01/orders.json`,
             {
@@ -47,39 +76,13 @@ app.post(
                 "Content-Type": "application/json",
                 "X-Shopify-Access-Token": process.env.SHOPIFY_API_TOKEN,
               },
-              body: JSON.stringify({
-                order: {
-                  email: session.customer_details?.email,
-                  financial_status: "paid",
-                  shipping_address: session.customer_details?.address
-                    ? {
-                        first_name:
-                          session.customer_details.name?.split(" ")[0] || "",
-                        last_name:
-                          session.customer_details.name?.split(" ")[1] || "",
-                        address1: session.customer_details.address.line1,
-                        city: session.customer_details.address.city,
-                        country: session.customer_details.address.country,
-                        zip: session.customer_details.address.postal_code,
-                      }
-                    : undefined,
-                  line_items: lineItems.data.map((item) => ({
-                    variant_id:
-                      item.price.product.metadata?.variant_id || undefined,
-                    quantity: item.quantity,
-                  })),
-                },
-              }),
+              body: JSON.stringify(payload),
             }
           );
 
           const data = await response.json();
           if (!response.ok) {
-            console.error(
-              "❌ Erro ao criar pedido na Shopify:",
-              response.status,
-              data
-            );
+            console.error("❌ Erro ao criar pedido na Shopify:", response.status, data.errors || data);
           } else {
             console.log("✅ Pedido criado na Shopify:", data);
           }
@@ -118,7 +121,7 @@ app.post(
           console.log("✅ Evento Purchase enviado para Meta.");
         }
       } catch (err) {
-        console.error("❌ Erro no webhook:", err.message);
+        console.error("❌ Erro no processamento do webhook:", err.message);
       }
 
       res.status(200).send("Webhook recebido");
@@ -128,14 +131,15 @@ app.post(
   }
 );
 
+// ✅ Agora podemos ativar JSON normal para os outros endpoints
+app.use(express.json());
+
 // ================= ENDPOINT CHECKOUT =================
 app.post("/checkout", async (req, res) => {
   const { items, email } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
-    return res
-      .status(400)
-      .json({ error: "Itens do carrinho são obrigatórios" });
+    return res.status(400).json({ error: "Itens do carrinho são obrigatórios" });
   }
 
   try {
@@ -147,9 +151,6 @@ app.post("/checkout", async (req, res) => {
         product_data: {
           name: item.name,
           images: item.image ? [item.image] : [],
-          metadata: {
-            variant_id: item.variant_id, // guardamos o variant_id
-          },
         },
         unit_amount: item.price, // em centavos
       },
@@ -171,9 +172,7 @@ app.post("/checkout", async (req, res) => {
       ...(email ? { customer_email: email } : {}),
       billing_address_collection: "required",
       shipping_address_collection: {
-        allowed_countries: [
-          "NL", "BE", "DE", "FR", "IT", "ES", "PT", "FI", "AT", "IE",
-        ],
+        allowed_countries: ["NL", "BE", "DE", "FR", "IT", "ES", "PT", "FI", "AT", "IE"],
       },
       success_url: "https://aveneli.com/pages/sucesso",
       cancel_url: "https://aveneli.com/pages/cancelado",
@@ -214,17 +213,11 @@ app.post("/checkout", async (req, res) => {
         )
         .then(() => console.log("✅ Evento InitiateCheckout enviado para Meta."))
         .catch((e) =>
-          console.error(
-            "❌ Erro ao enviar InitiateCheckout:",
-            e.response?.data || e.message
-          )
+          console.error("❌ Erro ao enviar InitiateCheckout:", e.response?.data || e.message)
         );
     }
   } catch (err) {
-    console.error(
-      "❌ Erro ao criar checkout:",
-      err.response?.data || err.message
-    );
+    console.error("❌ Erro ao criar checkout:", err.response?.data || err.message);
     res.status(500).json({ error: "Erro ao criar checkout" });
   }
 });
@@ -263,10 +256,7 @@ app.post("/add-payment-info", async (req, res) => {
     console.log("✅ Evento AddPaymentInfo enviado para Meta.");
     res.json({ success: true });
   } catch (err) {
-    console.error(
-      "❌ Erro ao enviar AddPaymentInfo:",
-      err.response?.data || err.message
-    );
+    console.error("❌ Erro ao enviar AddPaymentInfo:", err.response?.data || err.message);
     res.status(500).json({ error: "Erro ao enviar AddPaymentInfo" });
   }
 });
@@ -276,10 +266,13 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
 
 // ================= HOME =================
 app.get("/", (req, res) =>
-  res.send(
-    "✅ API Stripe Klarna/iDEAL rodando e integrada com Shopify + Meta Pixel"
-  )
+  res.send("✅ API Stripe Klarna/iDEAL rodando e integrada com Shopify + Meta Pixel")
 );
+
+// ================= START =================
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
+
 
 // ================= START =================
 const PORT = process.env.PORT || 8080;
