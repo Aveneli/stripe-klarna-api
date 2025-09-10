@@ -5,7 +5,7 @@ const axios = require("axios");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const crypto = require("crypto");
-const fetch = require("node-fetch"); // caso use node < 18
+const fetch = require("node-fetch"); // para Node < 18
 
 // ================= MIDDLEWARES =================
 app.use(cors());
@@ -32,7 +32,10 @@ app.post(
 
       try {
         // ===== Busca os itens do checkout =====
-        const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
+        const lineItems = await stripe.checkout.sessions.listLineItems(
+          session.id,
+          { expand: ["data.price.product"] } // necessário para pegar o metadata
+        );
 
         // ===== Cria pedido na Shopify =====
         try {
@@ -50,8 +53,10 @@ app.post(
                   financial_status: "paid",
                   shipping_address: session.customer_details?.address
                     ? {
-                        first_name: session.customer_details.name?.split(" ")[0] || "",
-                        last_name: session.customer_details.name?.split(" ")[1] || "",
+                        first_name:
+                          session.customer_details.name?.split(" ")[0] || "",
+                        last_name:
+                          session.customer_details.name?.split(" ")[1] || "",
                         address1: session.customer_details.address.line1,
                         city: session.customer_details.address.city,
                         country: session.customer_details.address.country,
@@ -59,24 +64,23 @@ app.post(
                       }
                     : undefined,
                   line_items: lineItems.data.map((item) => ({
-                    title: item.description,
+                    variant_id:
+                      item.price.product.metadata?.variant_id || undefined,
                     quantity: item.quantity,
-                    price: (item.amount_total / 100).toFixed(2), // precisa ser string/decimal
                   })),
                 },
               }),
             }
           );
 
+          const data = await response.json();
           if (!response.ok) {
-            const errorText = await response.text();
             console.error(
               "❌ Erro ao criar pedido na Shopify:",
               response.status,
-              errorText
+              data
             );
           } else {
-            const data = await response.json();
             console.log("✅ Pedido criado na Shopify:", data);
           }
         } catch (err) {
@@ -143,8 +147,11 @@ app.post("/checkout", async (req, res) => {
         product_data: {
           name: item.name,
           images: item.image ? [item.image] : [],
+          metadata: {
+            variant_id: item.variant_id, // guardamos o variant_id
+          },
         },
-        unit_amount: item.price,
+        unit_amount: item.price, // em centavos
       },
       quantity: item.quantity,
     }));
@@ -165,7 +172,7 @@ app.post("/checkout", async (req, res) => {
       billing_address_collection: "required",
       shipping_address_collection: {
         allowed_countries: [
-          "NL", "BE", "DE", "FR", "IT", "ES", "PT", "FI", "AT", "IE"
+          "NL", "BE", "DE", "FR", "IT", "ES", "PT", "FI", "AT", "IE",
         ],
       },
       success_url: "https://aveneli.com/pages/sucesso",
@@ -179,7 +186,7 @@ app.post("/checkout", async (req, res) => {
       email,
     });
 
-    // Envia evento InitiateCheckout para Meta
+    // ===== Envia evento InitiateCheckout para Meta =====
     if (process.env.META_PIXEL_ID && process.env.META_ACCESS_TOKEN) {
       const hashedEmail = email
         ? crypto.createHash("sha256").update(email).digest("hex")
@@ -214,7 +221,10 @@ app.post("/checkout", async (req, res) => {
         );
     }
   } catch (err) {
-    console.error("❌ Erro ao criar checkout:", err.response?.data || err.message);
+    console.error(
+      "❌ Erro ao criar checkout:",
+      err.response?.data || err.message
+    );
     res.status(500).json({ error: "Erro ao criar checkout" });
   }
 });
@@ -266,7 +276,9 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
 
 // ================= HOME =================
 app.get("/", (req, res) =>
-  res.send("✅ API Stripe Klarna/iDEAL rodando e integrada com Shopify + Meta Pixel")
+  res.send(
+    "✅ API Stripe Klarna/iDEAL rodando e integrada com Shopify + Meta Pixel"
+  )
 );
 
 // ================= START =================
