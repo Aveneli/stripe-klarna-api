@@ -36,42 +36,43 @@ app.post(
 
         // ===== Cria pedido na Shopify =====
         try {
-          const response = await fetch(
-            "https://15e136-1g.myshopify.com/admin/api/2024-01/orders.json",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Shopify-Access-Token": process.env.SHOPIFY_API_TOKEN,
-              },
-              body: JSON.stringify({
-                order: {
-                  email: session.customer_email,
-                  shipping_address: session.shipping ? {
-                    first_name: session.shipping.name?.split(" ")[0] || "",
-                    last_name: session.shipping.name?.split(" ")[1] || "",
-                    address1: session.shipping.address.line1,
-                    city: session.shipping.address.city,
-                    country: session.shipping.address.country,
-                    zip: session.shipping.address.postal_code,
-                  } : undefined,
-                  line_items: lineItems.data.map((item) => ({
-                    title: item.description,
-                    price: item.amount_total / 100,
-                    quantity: item.quantity,
-                  })),
-                  financial_status: "paid",
-                },
-              }),
-            }
-          );
+        const response = await fetch(
+  `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2024-01/orders.json`,
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": process.env.SHOPIFY_API_TOKEN,
+    },
+    body: JSON.stringify({
+      order: {
+        email: session.customer_details?.email,
+        financial_status: "paid",
+        shipping_address: session.customer_details?.address ? {
+          first_name: session.customer_details.name?.split(" ")[0] || "",
+          last_name: session.customer_details.name?.split(" ")[1] || "",
+          address1: session.customer_details.address.line1,
+          city: session.customer_details.address.city,
+          country: session.customer_details.address.country,
+          zip: session.customer_details.address.postal_code,
+        } : undefined,
+        line_items: lineItems.data.map((item) => ({
+          title: item.description,
+          quantity: item.quantity,
+          price: (item.amount_total / 100).toFixed(2), // precisa ser string/decimal
+        })),
+      },
+    }),
+  }
+);
 
-          const data = await response.json();
-          console.log("✅ Pedido criado na Shopify:", data);
-        } catch (err) {
-          console.error("❌ Erro ao criar pedido na Shopify:", err);
-        }
-
+if (!response.ok) {
+  const errorText = await response.text();
+  console.error("❌ Erro ao criar pedido na Shopify:", errorText);
+} else {
+  const data = await response.json();
+  console.log("✅ Pedido criado na Shopify:", data);
+}
         // ===== Envia evento de Purchase para Meta Pixel =====
         if (process.env.META_PIXEL_ID && process.env.META_ACCESS_TOKEN) {
           await axios.post(
