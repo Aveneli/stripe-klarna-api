@@ -23,11 +23,14 @@ app.post(
 
     let event;
     try {
-     event = req.body;
+      // 🔑 Validação correta com assinatura
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
     } catch (err) {
-      console.error("❌ Erro no webhook Stripe:", err.message);
+      console.error("❌ Erro na verificação do webhook:", err.message);
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
+
+    console.log("✅ Evento recebido do Stripe:", event.type);
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
@@ -123,11 +126,9 @@ app.post(
       } catch (err) {
         console.error("❌ Erro no processamento do webhook:", err.message);
       }
-
-      res.status(200).send("Webhook recebido");
-    } else {
-      res.status(200).send("Evento não tratado");
     }
+
+    res.json({ received: true });
   }
 );
 
@@ -268,11 +269,6 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
 app.get("/", (req, res) =>
   res.send("✅ API Stripe Klarna/iDEAL rodando e integrada com Shopify + Meta Pixel")
 );
-
-// ================= START =================
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
-
 
 // ================= START =================
 const PORT = process.env.PORT || 8080;
