@@ -1,67 +1,77 @@
-// server.js
 import express from "express";
-import Stripe from "stripe";
 import fetch from "node-fetch";
-import dotenv from "dotenv";
-
-dotenv.config();
+import bodyParser from "body-parser";
+import Stripe from "stripe";
 
 const app = express();
-const port = process.env.PORT || 3000;
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2025-06-30.basil",
-});
-
-// ⚡ Webhook precisa do body cru (sem JSON parse antes!)
-app.post(
+// --- Middlewares ---
+// Webhook Stripe precisa do raw body
+app.use(
   "/webhook",
-  express.raw({ type: "application/json" }),
-  (req, res) => {
-    const sig = req.headers["stripe-signature"];
-
-    let event;
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
-    } catch (err) {
-      console.error("❌ Erro no webhook:", err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-
-    // 🔔 Evento de checkout concluído
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      console.log("✅ Checkout concluído:", session);
-
-      // Criar pedido na Shopify
-      createShopifyOrder(session);
-    }
-
-    res.json({ received: true });
-  }
+  bodyParser.raw({ type: "application/json" })
 );
 
-// 🔄 Função para criar pedido na Shopify
-async function createShopifyOrder(session) {
-  try {
-    const shopifyOrder = {
-      order: {
-        email: session.customer_details.email,
-        financial_status: "paid",
-        line_items: [
-          {
-            title: "Pagamento Stripe",
-            quantity: 1,
-            price: session.amount_total / 100, // Stripe manda em centavos
-          },
-        ],
-      },
-    };
+// Para outras rotas com JSON normal
+app.use(express.json());
 
+// --- Webhook Stripe ---
+app.post("/webhook", async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("❌ Erro no webhook:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  console.log("✅ Webhook recebido:", event.type);
+
+  // Enviar evento para a Meta
+  try {
+    const metaResponse = await fetch(
+      `https://graph.facebook.com/v16.0/${process.env.META_PIXEL_ID}/events?access_token=${process.env.META_ACCESS_TOKEN}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data: [
+            {
+              event_name: "Purchase",
+              event_time: Math.floor(Date.now() / 1000),
+              action_source: "website",
+              event_id: event.id,
+              custom_data: {
+                value: event.data.object.amount / 100,
+                currency: event.data.object.currency
+              }
+            }
+          ]
+        }),
+      }
+    );
+
+    const metaData = await metaResponse.json();
+    console.log("✅ Evento enviado para a Meta:", metaData);
+  } catch (err) {
+    console.error("❌ Erro ao enviar evento para a Meta:", err);
+  }
+
+  res.json({ received: true });
+});
+
+// --- Criar pedido na Shopify ---
+app.post("/create-order", async (req, res) => {
+  const shopifyOrder = req.body;
+
+  try {
     const shopifyResponse = await fetch(
       `https://${process.env.SHOPIFY_DOMAIN}/admin/api/2025-01/orders.json`,
       {
@@ -76,16 +86,21 @@ async function createShopifyOrder(session) {
 
     const shopifyData = await shopifyResponse.json();
     console.log("🛍️ Pedido criado na Shopify:", shopifyData);
+    res.json(shopifyData);
   } catch (err) {
-    console.error("❌ Erro ao criar pedido na Shopify:", err.message);
+    console.error("❌ Erro ao criar pedido na Shopify:", err);
+    res.status(500).json({ error: err.message });
   }
-}
+});
 
-// ✅ Teste simples de rota
+// --- Rota de teste ---
 app.get("/", (req, res) => {
-  res.send("Servidor rodando ✅");
+  res.send("Servidor rodando! 🚀");
 });
 
-app.listen(port, () => {
-  console.log(`🚀 Servidor rodando na porta ${port}`);
+// --- Iniciar servidor na porta Fly.io ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
+
