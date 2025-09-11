@@ -4,27 +4,25 @@ import Stripe from "stripe";
 import bodyParser from "body-parser";
 
 const app = express();
-const port = process.env.PORT || 8080; // Porta segura para Fly.io
+const port = process.env.PORT || 8080;
 
 // ----------------- Stripe -----------------
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ----------------- Meta Pixel -----------------
 const META_PIXEL_ID = process.env.META_PIXEL_ID;
-const META_ACCESS_TOKEN = process.env.META_ACCSESS_TOKEN;
+const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 
 // ----------------- Shopify -----------------
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
 // ----------------- Middleware -----------------
-// Webhook Stripe precisa do raw body
 app.use(
   "/webhook",
-  bodyParser.raw({ type: "application/json" })
+  bodyParser.raw({ type: "application/json" }) // necessário para validar webhook Stripe
 );
 
-// Outros endpoints podem usar JSON normal
 app.use(express.json());
 
 // ----------------- Webhook Stripe -----------------
@@ -71,25 +69,26 @@ async function handleCheckoutCompleted(session) {
   const amount = session.amount_total / 100;
   const currency = session.currency;
 
-  // Criar pedido na Shopify
+  // Criar draft order na Shopify
   const shopifyOrder = {
-    order: {
+    draft_order: {
       email: session.customer_email || "noemail@example.com",
+      currency,
       line_items: [
         {
           title: "Pedido via Stripe",
           quantity: 1,
-          price: amount.toFixed(2),
-        },
+          price: amount.toFixed(2)
+        }
       ],
-      financial_status: "paid",
-      currency,
-    },
+      use_customer_default_address: true
+    }
   };
 
   try {
+    // Criar Draft Order
     const shopifyResponse = await fetch(
-      `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/orders.json`,
+      `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/draft_orders.json`,
       {
         method: "POST",
         headers: {
@@ -99,10 +98,28 @@ async function handleCheckoutCompleted(session) {
         body: JSON.stringify(shopifyOrder),
       }
     );
+
     const shopifyData = await shopifyResponse.json();
-    console.log("🛍️ Pedido criado na Shopify:", shopifyData);
+    console.log("🛍️ Draft Order criada na Shopify:", shopifyData);
+
+    // Completar o Draft Order → vira Pedido normal "paid"
+    if (shopifyData.draft_order && shopifyData.draft_order.id) {
+      const completeResponse = await fetch(
+        `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/draft_orders/${shopifyData.draft_order.id}/complete.json`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+          },
+        }
+      );
+      const completedData = await completeResponse.json();
+      console.log("✅ Draft Order completada:", completedData);
+    }
+
   } catch (err) {
-    console.error("Erro ao criar pedido na Shopify:", err);
+    console.error("❌ Erro ao criar draft order na Shopify:", err);
   }
 
   // Enviar evento Purchase para Meta
@@ -151,7 +168,7 @@ async function sendMetaEvent(eventName, value, currency) {
     const data = await response.json();
     console.log(`✅ Evento Meta enviado: ${eventName}`, data);
   } catch (err) {
-    console.error(`Erro enviando evento Meta ${eventName}:`, err);
+    console.error(`❌ Erro enviando evento Meta ${eventName}:`, err);
   }
 }
 
