@@ -69,26 +69,26 @@ async function handleCheckoutCompleted(session) {
   const amount = session.amount_total / 100;
   const currency = session.currency;
 
-  // Criar draft order na Shopify
+  // Criar pedido na Shopify (line_items customizados)
   const shopifyOrder = {
-    draft_order: {
+    order: {
       email: session.customer_email || "noemail@example.com",
-      currency,
       line_items: [
         {
           title: "Pedido via Stripe",
           quantity: 1,
-          price: amount.toFixed(2)
-        }
+          price: amount.toFixed(2),
+          taxable: false,
+        },
       ],
-      use_customer_default_address: true
-    }
+      financial_status: "paid",
+      currency: currency.toUpperCase(), // garante EUR
+    },
   };
 
   try {
-    // Criar Draft Order
     const shopifyResponse = await fetch(
-      `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/draft_orders.json`,
+      `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/orders.json`,
       {
         method: "POST",
         headers: {
@@ -100,31 +100,20 @@ async function handleCheckoutCompleted(session) {
     );
 
     const shopifyData = await shopifyResponse.json();
-    console.log("🛍️ Draft Order criada na Shopify:", shopifyData);
 
-    // Completar o Draft Order → vira Pedido normal "paid"
-    if (shopifyData.draft_order && shopifyData.draft_order.id) {
-      const completeResponse = await fetch(
-        `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/draft_orders/${shopifyData.draft_order.id}/complete.json`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-          },
-        }
-      );
-      const completedData = await completeResponse.json();
-      console.log("✅ Draft Order completada:", completedData);
+    if (!shopifyResponse.ok) {
+      console.error("❌ Erro da Shopify:", shopifyData);
+    } else {
+      console.log("🛍️ Pedido criado na Shopify:", shopifyData);
     }
-
   } catch (err) {
-    console.error("❌ Erro ao criar draft order na Shopify:", err);
+    console.error("Erro ao criar pedido na Shopify:", err);
   }
 
   // Enviar evento Purchase para Meta
   await sendMetaEvent("Purchase", amount, currency);
 }
+
 
 async function handlePaymentCreated(intent) {
   const amount = intent.amount / 100;
