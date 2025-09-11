@@ -152,6 +152,7 @@ async function sendMetaEvent(eventName, value, currency) {
 }
 
 // ----------------- Start server -----------------
+const port = process.env.PORT || 8080; // Fly.io define PORT automaticamente
 app.listen(port, () => {
   console.log(`🚀 Servidor rodando na porta ${port}`);
 });
