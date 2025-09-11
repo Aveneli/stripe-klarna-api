@@ -16,7 +16,7 @@ app.use(
   "/webhook",
   bodyParser.raw({ type: "application/json" }) // necessário para validar webhook Stripe
 );
-app.use(express.json()); // restante do app
+app.use(express.json());
 
 // ----------------- Checkout Stripe -----------------
 app.get("/create-checkout", async (req, res) => {
@@ -26,14 +26,14 @@ app.get("/create-checkout", async (req, res) => {
       line_items: [
         {
           price_data: {
-            currency: "usd",
+            currency: "eur", // moeda em euro
             product_data: {
-              name: "K-Beauty Seoul Retinal Eye Cream",
+              name: "Wood Therapy Roller – Lymphatic Massage & Body Care",
               metadata: {
-                variant_id: "53217072939284", // ID da Shopify
+                variant_id: "51213440745748", // ID da Shopify
               },
             },
-            unit_amount: 4500, // $45.00 em centavos
+            unit_amount: 2303, // 23,03 € em centavos
           },
           quantity: 1,
         },
@@ -43,6 +43,7 @@ app.get("/create-checkout", async (req, res) => {
       cancel_url: "https://seusite.com/cancelado",
     });
 
+    console.log("Checkout URL criado:", session.url);
     res.send({ url: session.url });
   } catch (err) {
     console.error("Erro criando checkout:", err);
@@ -66,14 +67,17 @@ app.post("/webhook", async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  console.log("Evento recebido:", event.type);
+
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
 
     try {
-      // Listar itens da sessão
       const lineItems = await stripe.checkout.sessions.listLineItems(session.id, {
         expand: ["data.price.product"],
       });
+
+      console.log("Line items da Stripe:", lineItems.data);
 
       const shopifyLineItems = lineItems.data.map((item) => ({
         variant_id: parseInt(item.price.product.metadata.variant_id, 10),
@@ -88,6 +92,8 @@ app.post("/webhook", async (req, res) => {
           line_items: shopifyLineItems,
         },
       };
+
+      console.log("Pedido Shopify enviado:", shopifyOrder);
 
       const shopifyResponse = await fetch(
         `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/orders.json`,
