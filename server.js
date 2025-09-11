@@ -12,6 +12,8 @@ const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
 // ----------------- Checkout Stripe -----------------
+app.use("/create-checkout", express.json()); // aqui pode usar JSON normalmente
+
 app.get("/create-checkout", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.create({
@@ -19,12 +21,12 @@ app.get("/create-checkout", async (req, res) => {
       line_items: [
         {
           price_data: {
-            currency: "eur", // moeda em euro
+            currency: "eur",
             product_data: {
               name: "Wood Therapy Roller – Lymphatic Massage & Body Care",
-              metadata: { variant_id: "51213440745748" }, // ID da Shopify
+              metadata: { variant_id: "51213440745748" },
             },
-            unit_amount: 2303, // 23,03 € em centavos
+            unit_amount: 2303,
           },
           quantity: 1,
         },
@@ -35,7 +37,6 @@ app.get("/create-checkout", async (req, res) => {
     });
 
     console.log("Checkout URL criado:", session.url);
-    // Redireciona direto para Stripe Checkout
     res.redirect(session.url);
   } catch (err) {
     console.error("Erro criando checkout:", err);
@@ -46,14 +47,14 @@ app.get("/create-checkout", async (req, res) => {
 // ----------------- Webhook Stripe -----------------
 app.post(
   "/webhook",
-  bodyParser.raw({ type: "application/json" }), // necessário para validar assinatura
+  bodyParser.raw({ type: "application/json" }), // importante: raw aqui!
   async (req, res) => {
     const sig = req.headers["stripe-signature"];
     let event;
 
     try {
       event = stripe.webhooks.constructEvent(
-        req.body,
+        req.body, // precisa ser Buffer cru
         sig,
         process.env.STRIPE_WEBHOOK_SECRET
       );
@@ -113,9 +114,6 @@ app.post(
     res.status(200).send({ received: true });
   }
 );
-
-// ----------------- Middleware para outras rotas -----------------
-app.use(express.json());
 
 // ----------------- Start server -----------------
 app.listen(port, () => {
