@@ -6,6 +6,7 @@ import bodyParser from "body-parser";
 const app = express();
 const port = process.env.PORT || 8080; // Porta segura para Fly.io
 
+// ----------------- CONFIGURAÇÃO -----------------
 // Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -17,12 +18,14 @@ const META_ACCESS_TOKEN = process.env.META_ACCSESS_TOKEN;
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
+// ----------------- MIDDLEWARE -----------------
 // Para receber o raw body necessário para validar o webhook do Stripe
 app.use(
   "/webhook",
   bodyParser.raw({ type: "application/json" })
 );
 
+// ----------------- WEBHOOK STRIPE -----------------
 app.post("/webhook", async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -61,8 +64,7 @@ app.post("/webhook", async (req, res) => {
   res.status(200).send();
 });
 
-// ----------------- Funções -----------------
-
+// ----------------- FUNÇÕES DE EVENTOS -----------------
 async function handleCheckoutCompleted(session) {
   const amount = session.amount_total / 100; // Stripe envia em centavos
   const currency = session.currency;
@@ -95,8 +97,10 @@ async function handleCheckoutCompleted(session) {
         body: JSON.stringify(shopifyOrder),
       }
     );
+
     const shopifyData = await shopifyResponse.json();
     console.log("🛍️ Pedido criado na Shopify:", shopifyData);
+    console.log("Status Shopify:", shopifyResponse.status, shopifyResponse.statusText);
   } catch (err) {
     console.error("Erro ao criar pedido na Shopify:", err);
   }
@@ -117,7 +121,7 @@ async function handlePaymentSucceeded(intent) {
   await sendMetaEvent("AddPaymentInfo", amount, currency);
 }
 
-// ----------------- Meta Pixel -----------------
+// ----------------- META PIXEL -----------------
 async function sendMetaEvent(eventName, value, currency) {
   try {
     const payload = {
@@ -144,12 +148,19 @@ async function sendMetaEvent(eventName, value, currency) {
         body: JSON.stringify(payload),
       }
     );
+
     const data = await response.json();
     console.log(`✅ Evento Meta enviado: ${eventName}`, data);
   } catch (err) {
     console.error(`Erro enviando evento Meta ${eventName}:`, err);
   }
 }
+
+// ----------------- START SERVER -----------------
+app.listen(port, () => {
+  console.log(`🚀 Servidor rodando na porta ${port}`);
+});
+
 
 // ----------------- Start server -----------------
 app.listen(port, () => {
