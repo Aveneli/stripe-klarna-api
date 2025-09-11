@@ -17,46 +17,45 @@ const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-// ----------------- Middleware -----------------
-app.use(
+// ----------------- Webhook Stripe -----------------
+app.post(
   "/webhook",
-  bodyParser.raw({ type: "application/json" }) // necessário para validar webhook Stripe
+  bodyParser.raw({ type: "application/json" }), // precisa ser raw só aqui
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body, // buffer cru
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.error("❌ Erro no webhook:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    const { type, data } = event;
+
+    try {
+      switch (type) {
+        case "checkout.session.completed":
+          await handleCheckoutCompleted(data.object);
+          break;
+        default:
+          console.log("Evento não tratado:", type);
+      }
+    } catch (err) {
+      console.error("Erro ao processar evento:", err);
+    }
+
+    res.status(200).send({ received: true });
+  }
 );
 
+// ----------------- Middleware JSON para o resto -----------------
 app.use(express.json());
-
-// ----------------- Webhook Stripe -----------------
-app.post("/webhook", async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    console.error("❌ Erro no webhook:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  const { type, data } = event;
-
-  try {
-    switch (type) {
-      case "checkout.session.completed":
-        await handleCheckoutCompleted(data.object);
-        break;
-      default:
-        console.log("Evento não tratado:", type);
-    }
-  } catch (err) {
-    console.error("Erro ao processar evento:", err);
-  }
-
-  res.status(200).send({ received: true });
-});
 
 // ----------------- Funções -----------------
 async function handleCheckoutCompleted(session) {
