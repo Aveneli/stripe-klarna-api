@@ -95,7 +95,19 @@ app.post(
               country: session.customer_details?.address?.country || "",
               zip: session.customer_details?.address?.postal_code || ""
             },
-            phone: session.customer_details?.phone || ""
+            phone: session.customer_details?.phone || "",
+
+            // Adiciona transação de pagamento
+            transactions: [
+              {
+                kind: "sale",
+                status: "success",
+                amount: (session.amount_total / 100).toFixed(2), // Stripe usa centavos
+                currency: session.currency.toUpperCase(),
+                gateway: "stripe",
+                authorization: session.payment_intent, // ID da transação na Stripe
+              },
+            ],
           },
         };
 
