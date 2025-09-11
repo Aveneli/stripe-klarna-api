@@ -1,10 +1,10 @@
-import express from "express"; 
+import express from "express";
 import fetch from "node-fetch";
 import Stripe from "stripe";
 import bodyParser from "body-parser";
 
 const app = express();
-const port = process.env.PORT || 8080; // Porta segura para Fly.io
+const port = process.env.PORT || 8080;
 
 // ----------------- CONFIGURAÇÃO -----------------
 // Stripe
@@ -12,18 +12,18 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 // Meta Pixel
 const META_PIXEL_ID = process.env.META_PIXEL_ID;
-const META_ACCESS_TOKEN = process.env.META_ACCSESS_TOKEN;
+const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN; // corrigido
 
 // Shopify
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
 // ----------------- MIDDLEWARE -----------------
-// Para receber o raw body necessário para validar o webhook do Stripe
-app.use(
-  "/webhook",
-  bodyParser.raw({ type: "application/json" })
-);
+// Webhook precisa do body cru
+app.use("/webhook", bodyParser.raw({ type: "application/json" }));
+
+// Outras rotas podem usar JSON normalmente
+app.use(express.json());
 
 // ----------------- WEBHOOK STRIPE -----------------
 app.post("/webhook", async (req, res) => {
@@ -66,103 +66,23 @@ app.post("/webhook", async (req, res) => {
 
 // ----------------- FUNÇÕES DE EVENTOS -----------------
 async function handleCheckoutCompleted(session) {
-  const amount = session.amount_total / 100; // Stripe envia em centavos
+  const amount = session.amount_total / 100;
   const currency = session.currency;
 
-  // Criar pedido na Shopify
+  // Buscar os itens comprados no checkout
+  const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
+
   const shopifyOrder = {
     order: {
       email: session.customer_email || "noemail@example.com",
-      line_items: [
-        {
-          title: "Pedido via Stripe",
-          quantity: 1,
-          price: amount.toFixed(2),
-        },
-      ],
+      line_items: lineItems.data.map((item) => ({
+        title: item.description,
+        quantity: item.quantity,
+        price: (item.amount_total / 100).toFixed(2),
+      })),
       financial_status: "paid",
       currency,
     },
   };
 
   try {
-    const shopifyResponse = await fetch(
-      `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/orders.json`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-        },
-        body: JSON.stringify(shopifyOrder),
-      }
-    );
-
-    const shopifyData = await shopifyResponse.json();
-    console.log("🛍️ Pedido criado na Shopify:", shopifyData);
-    console.log("Status Shopify:", shopifyResponse.status, shopifyResponse.statusText);
-  } catch (err) {
-    console.error("Erro ao criar pedido na Shopify:", err);
-  }
-
-  // Enviar evento Purchase para Meta
-  await sendMetaEvent("Purchase", amount, currency);
-}
-
-async function handlePaymentCreated(intent) {
-  const amount = intent.amount / 100;
-  const currency = intent.currency;
-  await sendMetaEvent("InitiateCheckout", amount, currency);
-}
-
-async function handlePaymentSucceeded(intent) {
-  const amount = intent.amount / 100;
-  const currency = intent.currency;
-  await sendMetaEvent("AddPaymentInfo", amount, currency);
-}
-
-// ----------------- META PIXEL -----------------
-async function sendMetaEvent(eventName, value, currency) {
-  try {
-    const payload = {
-      data: [
-        {
-          event_name: eventName,
-          event_time: Math.floor(Date.now() / 1000),
-          event_source_url: "https://yourshopifystore.com",
-          action_source: "website",
-          custom_data: {
-            currency,
-            value,
-          },
-        },
-      ],
-      access_token: META_ACCESS_TOKEN,
-    };
-
-    const response = await fetch(
-      `https://graph.facebook.com/v17.0/${META_PIXEL_ID}/events`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    const data = await response.json();
-    console.log(`✅ Evento Meta enviado: ${eventName}`, data);
-  } catch (err) {
-    console.error(`Erro enviando evento Meta ${eventName}:`, err);
-  }
-}
-
-// ----------------- START SERVER -----------------
-app.listen(port, () => {
-  console.log(`🚀 Servidor rodando na porta ${port}`);
-});
-
-
-// ----------------- Start server -----------------
-app.listen(port, () => {
-  console.log(`🚀 Servidor rodando na porta ${port}`);
-});
