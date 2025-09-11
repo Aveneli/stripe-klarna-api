@@ -4,113 +4,154 @@ import Stripe from "stripe";
 import bodyParser from "body-parser";
 
 const app = express();
+const port = process.env.PORT || 8080; // Porta segura para Fly.io
+
+// Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Para endpoints normais (não webhook)
-app.use(express.json());
+// Meta Pixel
+const META_PIXEL_ID = process.env.META_PIXEL_ID;
+const META_ACCESS_TOKEN = process.env.META_ACCSESS_TOKEN;
 
-// Endpoint do webhook Stripe
-app.post(
+// Shopify
+const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
+const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+
+// Para receber o raw body necessário para validar o webhook do Stripe
+app.use(
   "/webhook",
-  express.raw({ type: "application/json" }),
-  async (req, res) => {
-    const sig = req.headers["stripe-signature"];
-    let event;
-
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
-    } catch (err) {
-      console.log("❌ Erro no webhook:", err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-
-    // Processa eventos específicos, ex: checkout.session.completed
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-
-      // Criar pedido na Shopify
-      const shopifyOrder = {
-        order: {
-          email: session.customer_email,
-          line_items: session.display_items.map((item) => ({
-            variant_id: item.price.product, // ajuste conforme seu catálogo
-            quantity: item.quantity,
-          })),
-          financial_status: "paid",
-        },
-      };
-
-      try {
-        const shopifyResponse = await fetch(
-          `https://${process.env.SHOPIFY_DOMAIN}/admin/api/2025-01/orders.json`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
-            },
-            body: JSON.stringify(shopifyOrder),
-          }
-        );
-        const shopifyData = await shopifyResponse.json();
-        console.log("🛍️ Pedido criado na Shopify:", shopifyData);
-      } catch (err) {
-        console.log("❌ Erro criando pedido Shopify:", err);
-      }
-
-      // Enviar evento para Meta (Conversions API)
-      const metaEvent = {
-        data: [
-          {
-            event_name: "Purchase",
-            event_time: Math.floor(Date.now() / 1000),
-            action_source: "website",
-            event_id: session.id,
-            user_data: {
-              em: session.customer_email
-                ? stripe.utils.hash(session.customer_email)
-                : null,
-            },
-            custom_data: {
-              currency: session.currency,
-              value: session.amount_total / 100,
-            },
-          },
-        ],
-      };
-
-      try {
-        await fetch(
-          `https://graph.facebook.com/v17.0/${process.env.META_PIXEL_ID}/events?access_token=${process.env.META_ACCESS_TOKEN}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(metaEvent),
-          }
-        );
-        console.log("✅ Evento enviado para Meta");
-      } catch (err) {
-        console.log("❌ Erro enviando evento para Meta:", err);
-      }
-    }
-
-    res.json({ received: true });
-  }
+  bodyParser.raw({ type: "application/json" })
 );
 
-// Endpoint de teste geral
-app.get("/", (req, res) => {
-  res.send("Servidor rodando ✅");
+app.post("/webhook", async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("❌ Erro no webhook:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  const { type, data } = event;
+
+  try {
+    switch (type) {
+      case "checkout.session.completed":
+        await handleCheckoutCompleted(data.object);
+        break;
+      case "payment_intent.succeeded":
+        await handlePaymentSucceeded(data.object);
+        break;
+      case "payment_intent.created":
+        await handlePaymentCreated(data.object);
+        break;
+      default:
+        console.log("Evento não tratado:", type);
+    }
+  } catch (err) {
+    console.error("Erro ao processar evento:", err);
+  }
+
+  res.status(200).send();
 });
 
-// Porta dinâmica para Fly.io
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+// ----------------- Funções -----------------
+
+async function handleCheckoutCompleted(session) {
+  const amount = session.amount_total / 100; // Stripe envia em centavos
+  const currency = session.currency;
+
+  // Criar pedido na Shopify
+  const shopifyOrder = {
+    order: {
+      email: session.customer_email || "noemail@example.com",
+      line_items: [
+        {
+          title: "Pedido via Stripe",
+          quantity: 1,
+          price: amount.toFixed(2),
+        },
+      ],
+      financial_status: "paid",
+      currency,
+    },
+  };
+
+  try {
+    const shopifyResponse = await fetch(
+      `https://${SHOPIFY_DOMAIN}/admin/api/2025-01/orders.json`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+        },
+        body: JSON.stringify(shopifyOrder),
+      }
+    );
+    const shopifyData = await shopifyResponse.json();
+    console.log("🛍️ Pedido criado na Shopify:", shopifyData);
+  } catch (err) {
+    console.error("Erro ao criar pedido na Shopify:", err);
+  }
+
+  // Enviar evento Purchase para Meta
+  await sendMetaEvent("Purchase", amount, currency);
+}
+
+async function handlePaymentCreated(intent) {
+  const amount = intent.amount / 100;
+  const currency = intent.currency;
+  await sendMetaEvent("InitiateCheckout", amount, currency);
+}
+
+async function handlePaymentSucceeded(intent) {
+  const amount = intent.amount / 100;
+  const currency = intent.currency;
+  await sendMetaEvent("AddPaymentInfo", amount, currency);
+}
+
+// ----------------- Meta Pixel -----------------
+async function sendMetaEvent(eventName, value, currency) {
+  try {
+    const payload = {
+      data: [
+        {
+          event_name: eventName,
+          event_time: Math.floor(Date.now() / 1000),
+          event_source_url: "https://yourshopifystore.com",
+          action_source: "website",
+          custom_data: {
+            currency,
+            value,
+          },
+        },
+      ],
+      access_token: META_ACCESS_TOKEN,
+    };
+
+    const response = await fetch(
+      `https://graph.facebook.com/v17.0/${META_PIXEL_ID}/events`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+    const data = await response.json();
+    console.log(`✅ Evento Meta enviado: ${eventName}`, data);
+  } catch (err) {
+    console.error(`Erro enviando evento Meta ${eventName}:`, err);
+  }
+}
+
+// ----------------- Start server -----------------
+app.listen(port, () => {
+  console.log(`🚀 Servidor rodando na porta ${port}`);
 });
-
-
