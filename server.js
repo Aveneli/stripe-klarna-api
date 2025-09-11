@@ -1,10 +1,10 @@
-import express from "express";
+import express from "express"; 
 import fetch from "node-fetch";
 import Stripe from "stripe";
 import bodyParser from "body-parser";
 
 const app = express();
-const port = process.env.PORT || 8080; // Porta fornecida pelo Fly.io
+const port = process.env.PORT || 8080; // Porta segura para Fly.io
 
 // Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -17,13 +17,12 @@ const META_ACCESS_TOKEN = process.env.META_ACCSESS_TOKEN;
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-// Middleware para receber raw body necessário para validar webhook do Stripe
+// Para receber o raw body necessário para validar o webhook do Stripe
 app.use(
   "/webhook",
   bodyParser.raw({ type: "application/json" })
 );
 
-// Webhook Stripe
 app.post("/webhook", async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -126,7 +125,7 @@ async function sendMetaEvent(eventName, value, currency) {
         {
           event_name: eventName,
           event_time: Math.floor(Date.now() / 1000),
-          event_source_url: "https://yourshopifystore.com", // Substitua pelo seu domínio
+          event_source_url: "https://yourshopifystore.com",
           action_source: "website",
           custom_data: {
             currency,
