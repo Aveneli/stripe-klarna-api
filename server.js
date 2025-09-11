@@ -22,9 +22,7 @@ app.get("/create-checkout", async (req, res) => {
             currency: "eur", // moeda em euro
             product_data: {
               name: "Wood Therapy Roller – Lymphatic Massage & Body Care",
-              metadata: {
-                variant_id: "51213440745748", // ID da Shopify
-              },
+              metadata: { variant_id: "51213440745748" }, // ID da Shopify
             },
             unit_amount: 2303, // 23,03 € em centavos
           },
@@ -37,10 +35,11 @@ app.get("/create-checkout", async (req, res) => {
     });
 
     console.log("Checkout URL criado:", session.url);
-    res.send({ url: session.url });
+    // Redireciona direto para Stripe Checkout
+    res.redirect(session.url);
   } catch (err) {
     console.error("Erro criando checkout:", err);
-    res.status(500).send({ error: err.message });
+    res.status(500).send(`Erro: ${err.message}`);
   }
 });
 
