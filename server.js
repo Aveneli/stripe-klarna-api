@@ -28,7 +28,7 @@ app.get("/create-checkout", async (req, res) => {
       line_items: [
         {
           price_data: {
-            currency: "aud",
+            currency: "usd",
             product_data: {
               name: "Wood Therapy Roller – Lymphatic Massage & Body Care",
               metadata: {
